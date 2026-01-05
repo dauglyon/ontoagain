@@ -311,11 +311,14 @@ async def disambiguate_batch_async(
 
     # Parse result
     try:
-        match = re.search(r"\{.*\}", result, re.DOTALL)
-        if match:
-            selections = json.loads(match.group())
-        else:
+        if result is None:
             selections = {}
+        else:
+            match = re.search(r"\{.*\}", result, re.DOTALL)
+            if match:
+                selections = json.loads(match.group())
+            else:
+                selections = {}
     except json.JSONDecodeError:
         selections = {}
 

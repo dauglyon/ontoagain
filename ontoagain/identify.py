@@ -174,12 +174,12 @@ def format_ontology_info(metadata: list[OntologyMetadata]) -> str:
         return ""
 
     lines = ["## Available Ontologies", ""]
-    lines.append("Generate search terms that match these ontology term formats:")
+    lines.append("When generating context synonyms, use vocabulary that matches these ontologies:")
     lines.append("")
 
     for m in metadata:
         lines.append(f"- **{m.name}**: {m.description}")
-        lines.append(f"  - Term format: {m.term_format}")
+        lines.append(f"  - Use terms like: {m.term_format}")
 
     lines.append("")
     return "\n".join(lines)
