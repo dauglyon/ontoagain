@@ -4,15 +4,31 @@ LLM-powered ontology term identification and disambiguation for scientific paper
 
 ## What It Does
 
-OntoAgain extracts scientific concepts from research papers and maps them to ontology terms. Given a paper about DNA methylation, it produces:
+OntoAgain extracts scientific concepts from research papers and maps them to ontology terms.
 
+**Input** (plain text from a paper):
+```
+DNA methylation of 6mA in ciliates is associated with transcriptional activation.
+```
+
+**Output** (after IDENTIFY → DISAMBIGUATE pipeline):
 ```xml
-The <concept context="DNA methylation, epigenetic modification" search="DNA methylation">DNA methylation</concept>
-of <concept context="N6-methyladenine" search="6mA; N6-methyladenine">6mA</concept> in
-<concept context="ciliate protozoans" search="ciliates; Ciliophora">ciliates</concept>...
+<concept context="DNA methylation, epigenetic modification" search="DNA methylation">
+  DNA methylation
   <match ontology="GO" id="GO:0006306" label="DNA methylation"/>
+</concept> of
+<concept context="N6-methyladenine, adenine methylation" search="6mA; N6-methyladenine">
+  6mA
   <match ontology="CHEBI" id="CHEBI:21891" label="N6-methyladenine"/>
+</concept> in
+<concept context="ciliate protozoans, Ciliophora" search="ciliates; Ciliophora">
+  ciliates
   <match ontology="NCBITAXON" id="NCBITaxon:5878" label="Ciliophora"/>
+</concept> is associated with
+<concept context="activation of gene transcription" search="transcriptional activation">
+  transcriptional activation
+  <match ontology="GO" id="GO:0045893" label="positive regulation of transcription"/>
+</concept>.
 ```
 
 ## Why OntoAgain?
