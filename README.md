@@ -114,18 +114,42 @@ ontologies:
 
 This prevents matching "transposable element" to an NCBITaxon entry for a bacterium that contains transposons.
 
-## Performance
+## Benchmarks
 
-Tested on a Nature Genetics paper (109K characters) about DNA methylation.
+### Head-to-Head: OntoAgain vs OntoGPT
 
-| Metric | Value |
-|--------|-------|
-| Index size | 3.3M terms (GO + CHEBI + NCBITaxon + PR) |
-| Concepts extracted (5K excerpt) | 120 |
-| IDENTIFY time | 82s |
-| DISAMBIGUATE time | 66s |
-| Match rate | 59% (71/120) |
-| LLM batch reduction | 83% (120 → 21 batches) |
+Tested on a 2KB excerpt from a Nature Genetics paper about DNA methylation in eukaryotes.
+
+| Metric | OntoAgain | OntoGPT |
+|--------|-----------|---------|
+| Concepts extracted | 12 | 12 |
+| **Grounded to ontology** | **8 (67%)** | 4 (33%) |
+| **Total time** | **29s** | 166s |
+| Ontologies matched | GO, CHEBI, NCBITaxon, PR | NCBITaxon only |
+
+**OntoAgain grounded matches:**
+| Concept | Ontology | Term ID |
+|---------|----------|---------|
+| DNA methylation | GO | GO:0141119 |
+| 5-methylcytosine | CHEBI | CHEBI:27551 |
+| N6-methyladenine | CHEBI | CHEBI:28871 |
+| ciliates | NCBITaxon | NCBITaxon:5878 |
+| Chlamydomonas | NCBITaxon | NCBITaxon:3055 |
+| H3K4me3 | CHEBI | CHEBI:85043 |
+| transcriptional activation | GO | GO:0051091 |
+| DNA methyltransferases | PR | PR:P26358, PR:Q9Y6K1, PR:Q9UBC3 |
+
+OntoGPT only grounded 4 terms (all NCBITaxon) because its `desiccation` template—the closest multi-ontology option—is domain-specific. Using `go_simple` extracted terms but failed to ground any to real GO IDs.
+
+### Index Statistics
+
+| Ontology | Terms Indexed |
+|----------|---------------|
+| GO (Gene Ontology) | 39,365 |
+| CHEBI (Chemical Entities) | 204,727 |
+| NCBITaxon (Taxonomy) | 2,708,808 |
+| PR (Protein Ontology) | 360,304 |
+| **Total** | **3,313,204** |
 
 ## Installation
 
@@ -237,7 +261,14 @@ ontoagain/
 | **Scalability** | 3M+ terms via vector index | Limited by context window |
 | **Output** | Inline XML annotation | Structured JSON/YAML/RDF |
 | **Hallucination risk** | Low (selection from candidates) | Higher (LLM generates IDs) |
+| **Multi-ontology** | Single run across all indexed ontologies | Separate template per ontology |
+| **Speed** | ~29s for extract+ground | ~166s (template-dependent) |
+| **Grounding rate** | 67% on test text | 33% on test text |
 | **Use case** | Document annotation | Knowledge base population |
+
+**Key tradeoffs:**
+- OntoGPT excels at structured relation extraction with predefined schemas
+- OntoAgain excels at exploratory annotation across multiple ontologies without schema design
 
 ## Future Work
 
