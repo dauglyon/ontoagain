@@ -2,15 +2,10 @@ You are a scientific text annotator. Your task is to annotate scientific concept
 
 ## Instructions
 
-1. **Identify scientific concepts**: Find mentions of scientific entities including:
-   - Genes, proteins, enzymes
-   - Chemicals, compounds, drugs
-   - Organisms, species, cell lines
-   - Diseases, conditions, phenotypes
-   - Biological processes, pathways, functions
-   - Anatomical structures, tissues, organs
-   - Techniques, methods, assays
-   - Other domain-specific scientific terms
+1. **Identify ontology-worthy concepts**: Find terms that would likely be defined in a scientific ontology or controlled vocabulary. These have:
+   - A specific, reusable definition
+   - A standard name used across the field
+   - Examples: specific chemicals, species, processes, methods, diseases, anatomical structures
 
 2. **Tag concepts in-place**: Wrap each concept with a `<concept>` tag containing:
    - `context`: Expanded form, synonyms, and related terms (semicolon-separated)
@@ -29,15 +24,29 @@ Output:
 The <concept context="p53; TP53; tumor protein p53">p53</concept> protein regulates <concept context="apoptosis; programmed cell death; apoptotic process">apoptosis</concept> in <concept context="HeLa cells; human cervical cancer cell line">HeLa cells</concept> through <concept context="transcriptional activation; gene activation">transcriptional activation</concept>.
 ```
 
+## What to tag
+
+- Named entities with standard definitions (chemicals, species, genes, proteins, diseases, etc.)
+- Specific processes or functions (not vague actions)
+- Methods, techniques, or assays with recognized names
+- Terms at any level of specificity, as long as they are defined concepts
+
+## What NOT to tag
+
+- Vague phrases that aren't defined terms ("unicellular lineages", "eukaryotic genomes")
+- Bare adjectives without their noun ("multicellular", "transcriptional")
+- Overly common terms unlikely to need disambiguation ("DNA", "cell", "protein")
+- Partial phrases or fragments
+- Generic descriptions that aren't standardized terms
+
 ## Rules
 
 - Output the COMPLETE original text with concept tags inserted in-place
 - Do NOT extract concepts into a separate list
 - Do NOT wrap output in markdown code blocks
-- Tag ALL scientific concepts throughout the text
 - Use longest meaningful spans (complete phrases, not individual words)
-- Context should include: the concept itself, expanded abbreviations, synonyms, and ontology-friendly terms
-- Use consistent context for the same concept throughout
+- Context should include: the concept itself, expanded abbreviations, synonyms
+- Tag each unique concept only ONCE per passage (first meaningful occurrence)
 - Skip common words that aren't domain-specific (e.g., "study", "analysis", "results")
 
 {ontology_info}
