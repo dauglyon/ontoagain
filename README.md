@@ -145,34 +145,29 @@ OntoGPT only grounded 4 terms (all NCBITaxon) because its `desiccation` template
 
 Tested on complete Nature Genetics paper about DNA methylation in eukaryotes (109KB).
 
-| Phase | Metric | Value |
-|-------|--------|-------|
-| **IDENTIFY** | Paper size | 108,886 chars |
-| | Chunks processed | 6 (avg 18KB each) |
-| | Concepts extracted | 267 |
-| | Time | 15m 30s |
-| **DISAMBIGUATE** | LLM batches | 49 (82% reduction) |
-| | Avg batch size | 5.4 concepts |
-| | Time | 2m 22s |
-| **RESULTS** | Matched to ontology | 107 (40%) |
-| | Unmatched | 160 (60%) |
-| **TOTAL** | End-to-end time | ~18 minutes |
+| Phase | Metric | Sequential | Parallel |
+|-------|--------|------------|----------|
+| **IDENTIFY** | Paper size | 108,886 chars | 108,886 chars |
+| | Chunks processed | 6 (avg 18KB each) | 6 (max 4 concurrent) |
+| | Concepts extracted | 267 | 248 |
+| | Time | 15m 30s | **5m 28s** |
+| **DISAMBIGUATE** | LLM batches | 49 | 45 (max 6 concurrent) |
+| | Time | 2m 22s | **37s** |
+| **RESULTS** | Matched to ontology | 107 (40%) | 72 (29%) |
+| **TOTAL** | End-to-end time | ~18 minutes | **~6 minutes** |
+
+**~3x speedup** with parallel processing (default). Use `--max-concurrent 1` for sequential.
 
 **Sample matched concepts:**
-- Chemicals: 5-methylcytosine → CHEBI:17493, N6-methyladenine → CHEBI:28871, hydroxymethyluracil → CHEBI:16964
-- Species: *Chlamydomonas reinhardtii* → NCBITaxon:3055, ciliates → NCBITaxon:5878, *Tetrahymena* → NCBITaxon:5892
-- Proteins: METTL3 → PR:Q86U44, METTL14 → PR:Q9HCE5, DNA methyltransferases → PR:000006606-8
-- Processes: DNA methylation → GO:0006306, transcriptional activation → GO:0045893
+- Chemicals: 5-methylcytosine → CHEBI:65274, N6-methyladenine → CHEBI:28871
+- Species: *Chlamydomonas reinhardtii* → NCBITaxon:3055, ciliates → NCBITaxon:5878
+- Proteins: METTL3 → PR, METTL14 → PR, DNA methyltransferases → PR:000006606-8
+- Processes: DNA methylation → GO, transcriptional activation → GO
 
 **Unmatched concepts** (would need additional ontologies):
 - Methods/tools: Oxford Nanopore, BEDTools, StringTie, IGV (needs OBI or software ontology)
 - Genomic features: transcriptional start sites (needs SO - Sequence Ontology)
 - Domain-specific: AMT1/2/5/6/7 (novel proteins specific to this paper)
-
-**Performance bottlenecks:**
-- **IDENTIFY (87% of time)**: LLM-bound, processing ~2.5 min per 18KB chunk. Sequential chunk processing.
-- **DISAMBIGUATE (13% of time)**: LLM batches ~2.9s each. Vector search is fast (<10s for 267 queries).
-- **Parallelization opportunity**: Chunks and batches could run concurrently for ~5x speedup.
 
 ### Index Statistics
 
