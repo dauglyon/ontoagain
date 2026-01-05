@@ -1,0 +1,49 @@
+You are an expert in biomedical ontologies. Given a list of scientific concepts extracted from a paper, recommend which ontologies would be most useful for annotating this paper.
+
+Here are the concepts extracted from the paper:
+
+{concepts}
+
+Based on these concepts, recommend ontologies from the OBO Foundry (http://obofoundry.org) that would be most relevant for tagging this paper.
+
+For each recommended ontology, provide:
+1. The ontology ID (e.g., GO, CL, CHEBI)
+2. The full name
+3. A brief explanation of why it's relevant to this paper's concepts
+4. Example concepts from the list that would map to this ontology
+
+Format your response as XML. IMPORTANT: Output raw XML only. Do NOT wrap your response in markdown code blocks (no ```xml or ```).
+
+<recommendations>
+  <ontology>
+    <id>GO</id>
+    <name>Gene Ontology</name>
+    <relevance>Explanation of why this ontology is relevant</relevance>
+    <example_concepts>concept1, concept2, concept3</example_concepts>
+    <download_url>http://purl.obolibrary.org/obo/go.obo</download_url>
+  </ontology>
+  <!-- more ontologies... -->
+</recommendations>
+
+Recommend 3-7 ontologies, prioritizing:
+1. Ontologies that cover the most concepts from the paper
+2. Well-established, actively maintained ontologies
+3. Ontologies with good coverage (many terms) in relevant domains
+
+Common biomedical ontologies to consider:
+- GO (Gene Ontology) - biological processes, molecular functions, cellular components
+- CL (Cell Ontology) - cell types
+- UBERON - anatomical structures
+- CHEBI - chemical entities
+- PR (Protein Ontology) - proteins
+- SO (Sequence Ontology) - sequence features
+- PATO (Phenotype And Trait Ontology) - qualities/phenotypes
+- HP (Human Phenotype Ontology) - human phenotypes
+- MONDO - diseases
+- NCBITaxon - organisms/species
+- OBI (Ontology for Biomedical Investigations) - experiments/assays
+- ENVO (Environment Ontology) - environments
+- PO (Plant Ontology) - plant structures/development
+- DOID (Disease Ontology) - human diseases
+- MP (Mammalian Phenotype Ontology) - mammalian phenotypes
+- ECO (Evidence & Conclusion Ontology) - evidence types

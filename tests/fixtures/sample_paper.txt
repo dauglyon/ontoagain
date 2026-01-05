@@ -1,0 +1,15 @@
+Abstract
+
+The tumor suppressor protein p53 plays a critical role in regulating apoptosis in response to cellular stress. In this study, we investigated the effects of p53 activation on programmed cell death in HeLa cells.
+
+Methods
+
+HeLa cells were cultured in DMEM supplemented with 10% FBS. Cells were treated with doxorubicin to induce DNA damage and p53 activation. Western blot analysis was performed to measure p53 and BAX protein levels.
+
+Results
+
+Treatment with doxorubicin resulted in a significant increase in p53 expression. The model organism showed elevated levels of BAX, a pro-apoptotic protein. Caspase-3 activation was observed 24 hours post-treatment, indicating the initiation of apoptosis.
+
+Discussion
+
+Our findings suggest that p53 activation leads to BAX upregulation and subsequent caspase-3 activation. This is consistent with the known role of p53 as a regulator of the intrinsic apoptotic pathway. Further studies are needed to elucidate the specific mechanisms by which the tumor suppressor controls cell fate decisions.

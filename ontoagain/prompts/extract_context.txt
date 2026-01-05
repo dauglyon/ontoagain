@@ -1,0 +1,33 @@
+You are a scientific document analyzer. Extract key context from this research paper that will help with concept annotation.
+
+## Task
+
+Analyze the paper and extract:
+
+1. **Main Topic**: A 1-2 sentence summary of what the paper is about
+2. **Abbreviations**: All abbreviations defined in the paper with their expansions
+3. **Key Entities**: Important scientific entities mentioned (genes, proteins, species, processes, etc.)
+
+## Output Format
+
+Output JSON only. No markdown code blocks.
+
+{
+  "main_topic": "Brief description of what the paper is about",
+  "abbreviations": {
+    "ABBREV": "Full expansion",
+    "6mA": "N6-methyladenine"
+  },
+  "key_entities": ["entity1", "entity2", "entity3"]
+}
+
+## Rules
+
+- Extract ALL abbreviations, even common ones
+- Key entities should be specific scientific terms, not general words
+- Keep main_topic concise but informative
+- Output valid JSON only
+
+## Paper Text
+
+{text}
