@@ -196,6 +196,10 @@ def identify_cmd(
         Optional[Path],
         typer.Option("--output", "-o", help="Output XML file (default: stdout)"),
     ] = None,
+    max_concurrent: Annotated[
+        int,
+        typer.Option("--max-concurrent", "-c", help="Max concurrent LLM calls (1=sequential)"),
+    ] = 4,
     verbose: Annotated[
         bool,
         typer.Option("--verbose", "-v", help="Show progress info"),
@@ -233,12 +237,13 @@ def identify_cmd(
     if verbose:
         typer.echo("Extracting concepts...")
     xml_output = identify(
-        text, model=model, ontology_metadata=ontology_metadata, verbose=verbose
+        text, model=model, ontology_metadata=ontology_metadata, verbose=verbose,
+        max_concurrent=max_concurrent,
     )
 
     # Count concepts for verbose output
     if verbose:
-        concept_count = xml_output.count("<concept ")
+        concept_count = xml_output.count("<C ") + xml_output.count("<concept ")
         typer.echo(f"Extracted {concept_count} concepts")
         typer.echo("")
 
@@ -269,6 +274,10 @@ def disambiguate_cmd(
         Optional[Path],
         typer.Option("--output", "-o", help="Output XML file (default: stdout)"),
     ] = None,
+    max_concurrent: Annotated[
+        int,
+        typer.Option("--max-concurrent", "-c", help="Max concurrent LLM calls (1=sequential)"),
+    ] = 6,
     verbose: Annotated[
         bool,
         typer.Option("--verbose", "-v", help="Show progress info"),
@@ -301,7 +310,7 @@ def disambiguate_cmd(
     xml_input = xml_file.read_text()
 
     if verbose:
-        concept_count = xml_input.count("<concept ")
+        concept_count = xml_input.count("<C ") + xml_input.count("<concept ")
         typer.echo(f"Loaded {concept_count} concepts from {xml_file}")
         typer.echo("")
 
@@ -310,7 +319,7 @@ def disambiguate_cmd(
         typer.echo("Matching concepts to ontology...")
     updated_xml, stats = disambiguate(
         xml_input, index_path, model=model, verbose=verbose,
-        ontology_metadata=ontology_metadata,
+        ontology_metadata=ontology_metadata, max_concurrent=max_concurrent,
     )
 
     if verbose:

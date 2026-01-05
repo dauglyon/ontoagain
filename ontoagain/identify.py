@@ -1,10 +1,12 @@
 """IDENTIFY agent - extract concepts from scientific text."""
 
+import asyncio
 import json
 import re
+import time
 from pathlib import Path
 
-from ontoagain.llm import call_llm, get_client
+from ontoagain.llm import call_llm, call_llm_async, get_client
 from ontoagain.models import Concept, OntologyMetadata
 from ontoagain.xml_utils import (
     fix_truncated_xml,
@@ -231,6 +233,97 @@ def identify_chunk(
     return result
 
 
+async def identify_chunk_async(
+    text: str,
+    model: str,
+    ontology_info: str,
+    document_context: str,
+    chunk_num: int,
+    total_chunks: int,
+) -> tuple[int, str, int]:
+    """Async version of identify_chunk for parallel processing.
+
+    Args:
+        text: Text chunk to process
+        model: LLM model to use
+        ontology_info: Formatted ontology info string
+        document_context: Formatted document context string
+        chunk_num: Current chunk number (1-indexed)
+        total_chunks: Total number of chunks
+
+    Returns:
+        Tuple of (chunk_num, result_xml, concept_count)
+    """
+    prompt_template = load_prompt()
+
+    # Build prompt with context
+    prompt = prompt_template.replace("{ontology_info}", ontology_info)
+    prompt = prompt.replace("{document_context}", document_context)
+    prompt = prompt.replace("{text}", text)
+
+    messages = [{"role": "user", "content": prompt}]
+    result = await call_llm_async(model, messages)
+
+    # Fix any truncated XML
+    result = fix_truncated_xml(result)
+    concept_count = result.count("<C ") + result.count("<concept ")
+
+    return chunk_num, result, concept_count
+
+
+async def identify_parallel(
+    chunks: list[str],
+    model: str,
+    ontology_info: str,
+    max_concurrent: int = 4,
+    verbose: bool = False,
+) -> list[str]:
+    """Process chunks in parallel with concurrency limit.
+
+    Args:
+        chunks: List of text chunks to process
+        model: LLM model to use
+        ontology_info: Formatted ontology info string
+        max_concurrent: Maximum concurrent LLM calls
+        verbose: Print progress info
+
+    Returns:
+        List of tagged XML chunks in order
+    """
+    semaphore = asyncio.Semaphore(max_concurrent)
+    total_chunks = len(chunks)
+    start_time = time.time()
+
+    async def process_with_limit(chunk: str, chunk_num: int) -> tuple[int, str, int]:
+        async with semaphore:
+            chunk_start = time.time()
+            if verbose:
+                print(f"  [{chunk_num}/{total_chunks}] Processing {len(chunk)} chars...", flush=True)
+
+            result = await identify_chunk_async(
+                chunk, model, ontology_info, "", chunk_num, total_chunks
+            )
+
+            elapsed = time.time() - chunk_start
+            if verbose:
+                print(f"  [{chunk_num}/{total_chunks}] Done: {result[2]} concepts ({elapsed:.1f}s)", flush=True)
+            return result
+
+    # Launch all tasks
+    tasks = [process_with_limit(chunk, i + 1) for i, chunk in enumerate(chunks)]
+    results = await asyncio.gather(*tasks)
+
+    # Sort by chunk_num and return in order
+    results_sorted = sorted(results, key=lambda x: x[0])
+
+    if verbose:
+        total_elapsed = time.time() - start_time
+        total_concepts = sum(r[2] for r in results_sorted)
+        print(f"\nParallel processing complete: {total_concepts} concepts in {total_elapsed:.1f}s", flush=True)
+
+    return [r[1] for r in results_sorted]
+
+
 def combine_chunk_outputs(chunks: list[str], overlap: int = CHUNK_OVERLAP_CHARS) -> str:
     """Combine tagged chunk outputs, handling overlapping regions.
 
@@ -280,18 +373,19 @@ def identify(
     model: str = DEFAULT_MODEL,
     ontology_metadata: list[OntologyMetadata] | None = None,
     verbose: bool = False,
+    max_concurrent: int = 4,
 ) -> str:
     """Run the IDENTIFY agent on paper text.
 
-    For long documents, uses two-pass chunking:
-    1. Extract document context (abbreviations, topic, key entities)
-    2. Process chunks with context injected
+    For long documents, uses chunking. With max_concurrent > 1, chunks
+    are processed concurrently for faster execution.
 
     Args:
         text: Plain text of the paper
         model: LLM model to use
         ontology_metadata: Optional metadata about indexed ontologies
         verbose: Print debug info
+        max_concurrent: Maximum concurrent LLM calls (1 = sequential, default 4)
 
     Returns:
         XML-tagged text with concepts
@@ -320,7 +414,8 @@ def identify(
 
     # Long document: chunk and process
     if verbose:
-        print(f"Document too long ({len(text)} chars), using chunked processing...", flush=True)
+        mode = f"parallel, max {max_concurrent} concurrent" if max_concurrent > 1 else "sequential"
+        print(f"Document too long ({len(text)} chars), using chunked processing ({mode})...", flush=True)
 
     chunks = chunk_text(text)
 
@@ -329,23 +424,13 @@ def identify(
         print(f"  Chunks: {len(chunks)} (sizes: {min(chunk_sizes)}-{max(chunk_sizes)}, avg {sum(chunk_sizes)//len(chunks)})", flush=True)
         print(flush=True)
 
-    tagged_chunks = []
-    total_concepts = 0
-    for i, chunk in enumerate(chunks, 1):
-        tagged = identify_chunk(
-            chunk, model, ontology_info, document_context="",
-            verbose=verbose, chunk_num=i, total_chunks=len(chunks)
-        )
-        tagged_chunks.append(tagged)
-
-        chunk_concepts = tagged.count("<concept ")
-        total_concepts += chunk_concepts
-        if verbose:
-            print(f"    Concepts: {chunk_concepts}", flush=True)
+    tagged_chunks = asyncio.run(
+        identify_parallel(chunks, model, ontology_info, max_concurrent, verbose)
+    )
 
     # Combine chunks
     result = combine_chunk_outputs(tagged_chunks)
-    final_concepts = result.count("<concept ")
+    final_concepts = result.count("<C ") + result.count("<concept ")
 
     if verbose:
         print(flush=True)
@@ -368,9 +453,10 @@ def parse_xml_output(xml_text: str) -> list[Concept]:
     root = parse_xml_fragment(xml_text)
     original_text = strip_tags(xml_text)
 
-    for concept_elem in root.findall(".//concept"):
+    # Support both <C q="..."> (new compact) and <concept context="..."> (legacy)
+    for concept_elem in root.findall(".//C") + root.findall(".//concept"):
         concept_text = concept_elem.text or ""
-        concept_context = concept_elem.get("context", "")
+        concept_context = concept_elem.get("q", "") or concept_elem.get("context", "")
 
         # Find position in original text
         start, end = _find_position(original_text, concept_text, concepts)

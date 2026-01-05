@@ -8,23 +8,30 @@ def fix_truncated_xml(xml_text: str) -> str:
     """Fix truncated XML output from LLM.
 
     Handles cases where output was cut off mid-tag due to token limits.
+    Supports both <C q="..."> (compact) and <concept context="..."> (legacy) formats.
     """
     text = xml_text.rstrip()
 
-    # Check for unclosed concept tag at the end
-    # Find the last <concept and check if it has a closing </concept>
+    # Check for unclosed <C> tag (compact format)
+    last_open_c = text.rfind("<C ")
+    if last_open_c != -1:
+        last_close_c = text.rfind("</C>")
+        if last_close_c < last_open_c:
+            remaining = text[last_open_c:]
+            if ">" not in remaining:
+                text = text + '">TRUNCATED</C>'
+            else:
+                text = text + "</C>"
+
+    # Check for unclosed <concept> tag (legacy format)
     last_open = text.rfind("<concept")
     if last_open != -1:
         last_close = text.rfind("</concept>")
         if last_close < last_open:
-            # Unclosed concept tag - try to close it
-            # Check if we're in the middle of an attribute
             remaining = text[last_open:]
             if ">" not in remaining:
-                # Still in opening tag - close the tag and element
                 text = text + '">TRUNCATED</concept>'
             else:
-                # Opening tag complete but no closing tag
                 text = text + "</concept>"
 
     return text
@@ -181,7 +188,9 @@ def safe_get_text(elem: ET.Element | None) -> str:
 
 
 def extract_concepts_from_xml(xml_text: str) -> list[dict]:
-    """Extract concept information from XML with <concept> tags.
+    """Extract concept information from XML with concept tags.
+
+    Supports both <C q="..."> (compact) and <concept context="..."> (legacy) formats.
 
     Args:
         xml_text: XML text with concept tags
@@ -193,11 +202,12 @@ def extract_concepts_from_xml(xml_text: str) -> list[dict]:
     root = parse_xml_fragment(xml_text)
     concepts = []
 
-    for i, elem in enumerate(root.findall(".//concept")):
+    # Support both <C q="..."> (compact) and <concept context="..."> (legacy)
+    for elem in root.findall(".//C") + root.findall(".//concept"):
         concepts.append({
-            "index": i,
+            "index": len(concepts),
             "text": elem.text or "",
-            "context": elem.get("context", ""),
+            "context": elem.get("q", "") or elem.get("context", ""),
         })
 
     return concepts
@@ -209,6 +219,9 @@ def update_xml_with_matches(
 ) -> str:
     """Update concept tags in XML with nested match elements.
 
+    Supports both <C q="..."> (compact) and <concept context="..."> (legacy) formats.
+    Output uses readable <concept context="..."> format with nested <match/> elements.
+
     Args:
         xml_text: Original XML with concept tags
         matches: List of matches for each concept (parallel to concept order in XML).
@@ -219,17 +232,21 @@ def update_xml_with_matches(
     """
     result = xml_text
     offset = 0  # Track offset as we modify the string
+    match_idx = 0
 
-    # Pattern to match concept tags
-    pattern = r'<concept\s+([^>]*)>([^<]*)</concept>'
+    # Pattern to match both <C q="..."> and <concept context="..."> tags
+    pattern = r'<(C|concept)\s+(?:q|context)="([^"]*)"?>([^<]*)</(C|concept)>'
 
-    for i, match in enumerate(re.finditer(pattern, xml_text)):
-        if i >= len(matches):
+    for match in re.finditer(pattern, xml_text):
+        if match_idx >= len(matches):
             break
 
-        concept_matches = matches[i]
-        if not concept_matches:
-            continue  # No matches for this concept
+        concept_matches = matches[match_idx]
+        match_idx += 1
+
+        # Get context and concept text
+        context = match.group(2)
+        concept_text = match.group(3)
 
         # Build nested match elements
         match_elements = []
@@ -237,14 +254,13 @@ def update_xml_with_matches(
             match_elements.append(
                 f'<match ontology="{m["ontology"]}" id="{m["id"]}" label="{_escape_attr(m["label"])}"/>'
             )
-        matches_xml = "\n  ".join(match_elements)
 
-        # Get existing attributes and concept text
-        existing_attrs = match.group(1)
-        concept_text = match.group(2)
-
-        # Build new tag with nested matches
-        new_tag = f'<concept {existing_attrs}>{concept_text}\n  {matches_xml}\n</concept>'
+        # Build new tag (always use readable <concept> format for output)
+        if match_elements:
+            matches_xml = "\n  ".join(match_elements)
+            new_tag = f'<concept context="{_escape_attr(context)}">{concept_text}\n  {matches_xml}\n</concept>'
+        else:
+            new_tag = f'<concept context="{_escape_attr(context)}">{concept_text}</concept>'
 
         # Replace in result (accounting for offset from previous replacements)
         start = match.start() + offset

@@ -13,7 +13,7 @@ OpenAI-compatible (e.g., CBORG):
 import os
 
 import instructor
-from litellm import completion
+from litellm import acompletion, completion
 
 
 def get_client(model: str = "anthropic/claude-sonnet"):
@@ -82,3 +82,35 @@ def call_llm(
 
         response = raw_completion(**kwargs)
         return response.choices[0].message.content
+
+
+async def call_llm_async(
+    model: str,
+    messages: list[dict],
+) -> str:
+    """Async version of call_llm for parallel processing.
+
+    Args:
+        model: Model identifier
+        messages: List of message dicts with 'role' and 'content'
+
+    Returns:
+        The LLM response content
+    """
+    api_base = _get_api_base()
+
+    # For custom OpenAI-compatible endpoints, prefix model with openai/
+    effective_model = model
+    if api_base and not model.startswith("openai/"):
+        effective_model = f"openai/{model}"
+
+    # Build kwargs
+    kwargs = {
+        "model": effective_model,
+        "messages": messages,
+    }
+    if api_base:
+        kwargs["api_base"] = api_base
+
+    response = await acompletion(**kwargs)
+    return response.choices[0].message.content

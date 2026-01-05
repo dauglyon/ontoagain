@@ -1,12 +1,13 @@
 """DISAMBIGUATE agent - map concepts to ontology terms."""
 
+import asyncio
 import json
 import re
 import time
 from pathlib import Path
 
 from ontoagain.index import search_index, search_index_batch
-from ontoagain.llm import call_llm, get_client
+from ontoagain.llm import call_llm, call_llm_async, get_client
 from ontoagain.models import Concept, OntologyMatch, OntologyMetadata, TaggedConcept
 from ontoagain.xml_utils import extract_concepts_from_xml, update_xml_with_matches
 
@@ -251,6 +252,155 @@ def disambiguate_batch(
     return results
 
 
+async def disambiguate_batch_async(
+    concepts: list[Concept],
+    all_candidates: list[list[dict]],
+    indices: list[int],
+    model: str,
+    batch_num: int,
+    total_batches: int,
+    ontology_metadata: list[OntologyMetadata] | None = None,
+) -> tuple[int, dict[int, list[OntologyMatch]]]:
+    """Async version of disambiguate_batch for parallel processing.
+
+    Args:
+        concepts: Full list of concepts
+        all_candidates: Candidates for each concept (parallel to concepts)
+        indices: Which concept indices to process in this batch
+        model: LLM model to use
+        batch_num: Current batch number for progress
+        total_batches: Total number of batches for progress
+        ontology_metadata: Optional metadata about ontologies
+
+    Returns:
+        Tuple of (batch_num, dict mapping concept index to list of OntologyMatch)
+    """
+    # Collect unique candidates across the batch
+    candidate_map: dict[str, dict] = {}
+    for idx in indices:
+        for c in all_candidates[idx]:
+            candidate_map[c["id"]] = c
+
+    if not candidate_map:
+        return batch_num, {idx: [] for idx in indices}
+
+    # Format concepts for prompt
+    concept_lines = []
+    for i, idx in enumerate(indices):
+        c = concepts[idx]
+        concept_lines.append(f"{i}. **{c.text}**: {c.context}")
+    concepts_text = "\n".join(concept_lines)
+
+    # Format candidates
+    candidates_text = format_candidates(list(candidate_map.values()))
+
+    # Format ontology context
+    ontology_context = ""
+    if ontology_metadata:
+        ontology_context = format_ontology_context(ontology_metadata)
+
+    # Build prompt
+    prompt = load_batch_prompt()
+    prompt = prompt.replace("{ontology_context}", ontology_context)
+    prompt = prompt.replace("{concepts}", concepts_text)
+    prompt = prompt.replace("{candidates}", candidates_text)
+
+    # Call LLM async
+    messages = [{"role": "user", "content": prompt}]
+    result = await call_llm_async(model, messages)
+
+    # Parse result
+    try:
+        match = re.search(r"\{.*\}", result, re.DOTALL)
+        if match:
+            selections = json.loads(match.group())
+        else:
+            selections = {}
+    except json.JSONDecodeError:
+        selections = {}
+
+    # Build matches for each concept
+    results: dict[int, list[OntologyMatch]] = {}
+    for i, idx in enumerate(indices):
+        selected_ids = selections.get(str(i), [])
+        matches = []
+        for term_id in selected_ids:
+            if term_id in candidate_map:
+                c = candidate_map[term_id]
+                matches.append(
+                    OntologyMatch(
+                        ontology=c["ontology"],
+                        id=c["id"],
+                        label=c["label"],
+                    )
+                )
+        results[idx] = matches
+
+    return batch_num, results
+
+
+async def disambiguate_parallel(
+    clusters: list[list[int]],
+    concepts: list[Concept],
+    all_candidates: list[list[dict]],
+    model: str,
+    max_concurrent: int = 6,
+    verbose: bool = False,
+    ontology_metadata: list[OntologyMetadata] | None = None,
+) -> dict[int, list[OntologyMatch]]:
+    """Process batches in parallel with concurrency limit.
+
+    Args:
+        clusters: List of clusters (each cluster is a list of concept indices)
+        concepts: Full list of concepts
+        all_candidates: Candidates for each concept
+        model: LLM model to use
+        max_concurrent: Maximum concurrent LLM calls
+        verbose: Print progress info
+        ontology_metadata: Optional metadata about ontologies
+
+    Returns:
+        Dict mapping concept index to list of OntologyMatch
+    """
+    semaphore = asyncio.Semaphore(max_concurrent)
+    total_batches = len(clusters)
+    start_time = time.time()
+
+    async def process_with_limit(cluster: list[int], batch_num: int) -> tuple[int, dict[int, list[OntologyMatch]]]:
+        async with semaphore:
+            batch_start = time.time()
+            if verbose:
+                first_concept = concepts[cluster[0]].text[:40]
+                print(f"  [{batch_num}/{total_batches}] {len(cluster)} concepts: {first_concept}...", flush=True)
+
+            result = await disambiguate_batch_async(
+                concepts, all_candidates, cluster, model,
+                batch_num, total_batches, ontology_metadata
+            )
+
+            elapsed = time.time() - batch_start
+            if verbose:
+                matched = sum(1 for idx in cluster if result[1].get(idx))
+                print(f"  [{batch_num}/{total_batches}] Done: {matched}/{len(cluster)} matched ({elapsed:.1f}s)", flush=True)
+            return result
+
+    # Launch all tasks
+    tasks = [process_with_limit(cluster, i + 1) for i, cluster in enumerate(clusters)]
+    results = await asyncio.gather(*tasks)
+
+    # Merge all results
+    all_matches: dict[int, list[OntologyMatch]] = {}
+    for _, batch_results in results:
+        all_matches.update(batch_results)
+
+    if verbose:
+        total_elapsed = time.time() - start_time
+        matched_count = sum(1 for m in all_matches.values() if m)
+        print(f"\nParallel processing complete: {matched_count}/{len(concepts)} matched in {total_elapsed:.1f}s", flush=True)
+
+    return all_matches
+
+
 def disambiguate_concept(
     concept: Concept,
     index_path: Path,
@@ -340,11 +490,13 @@ def disambiguate(
     top_k: int = 20,
     verbose: bool = False,
     ontology_metadata: list[OntologyMetadata] | None = None,
+    max_concurrent: int = 6,
 ) -> tuple[str, dict]:
     """Disambiguate concepts in XML to ontology terms.
 
     Uses batching to reduce LLM calls: concepts with overlapping candidate sets
-    are grouped and processed together.
+    are grouped and processed together. With max_concurrent > 1, batches
+    are processed concurrently for faster execution.
 
     Args:
         xml_input: XML text with <concept> tags from IDENTIFY
@@ -353,6 +505,7 @@ def disambiguate(
         top_k: Number of candidates per concept
         verbose: Print debug info
         ontology_metadata: Optional metadata about ontologies for context
+        max_concurrent: Maximum concurrent LLM calls (1 = sequential, default 6)
 
     Returns:
         Tuple of (updated_xml, stats)
@@ -387,7 +540,8 @@ def disambiguate(
     clusters = cluster_by_candidates(concept_candidate_sets)
 
     if verbose:
-        print(f"  Grouped into {len(clusters)} batches (from {len(concept_dicts)} concepts)")
+        mode = f"parallel, max {max_concurrent} concurrent" if max_concurrent > 1 else "sequential"
+        print(f"  Grouped into {len(clusters)} batches (from {len(concept_dicts)} concepts) [{mode}]")
 
     # Convert dicts to Concept objects for batch processing
     concepts = [
@@ -401,15 +555,12 @@ def disambiguate(
     ]
 
     # Step 3: Disambiguate each cluster
-    all_matches: dict[int, list[OntologyMatch]] = {}
-    total_batches = len(clusters)
-    for batch_num, cluster in enumerate(clusters, 1):
-        batch_results = disambiguate_batch(
-            concepts, all_candidates, cluster, model, verbose,
-            batch_num=batch_num, total_batches=total_batches,
-            ontology_metadata=ontology_metadata,
+    all_matches = asyncio.run(
+        disambiguate_parallel(
+            clusters, concepts, all_candidates, model,
+            max_concurrent, verbose, ontology_metadata
         )
-        all_matches.update(batch_results)
+    )
 
     # Step 4: Build matches list parallel to concepts for XML update
     matches_list: list[list[dict]] = []
