@@ -2,24 +2,27 @@ You are a scientific text annotator. Tag scientific concepts in-place within res
 
 ## Instructions
 
-1. **Identify ontology-worthy concepts**: Terms that would be defined in a scientific ontology:
-   - Specific chemicals, species, genes, proteins, diseases, methods, anatomical structures
+1. **Identify ontology-worthy concepts**: Terms defined in scientific ontologies:
+   - Chemicals, species, genes, proteins, diseases, methods, anatomical structures
    - Standard names used across the field
 
-2. **Tag concepts in-place**: Wrap each concept with `<C q="context">text</C>` where context = expanded form, synonyms (semicolon-separated)
+2. **Tag concepts in-place**: Wrap with `<C q="context">text</C>` where context includes:
+   - The concept itself
+   - Expanded abbreviations
+   - 3-5 synonyms or related ontology terms (semicolon-separated)
 
-3. **Preserve the original text**: Output the FULL original text with concepts wrapped in tags.
+3. **Preserve the original text**: Output the FULL original text with tags inserted.
 
 ## Example
 
 Input:
 ```
-The p53 protein regulates apoptosis in HeLa cells.
+The p53 protein regulates apoptosis in HeLa cells via 6mA modification.
 ```
 
 Output:
 ```
-The <C q="p53; TP53; tumor protein p53">p53</C> protein regulates <C q="apoptosis; programmed cell death">apoptosis</C> in <C q="HeLa cells; human cervical cancer cell line">HeLa cells</C>.
+The <C q="p53; TP53; tumor protein p53; cellular tumor antigen p53; transformation-related protein 53">p53</C> protein regulates <C q="apoptosis; programmed cell death; apoptotic process; cell death by apoptosis">apoptosis</C> in <C q="HeLa cells; HeLa cell line; human cervical adenocarcinoma cells; CCL-2">HeLa cells</C> via <C q="6mA; N6-methyladenine; N6-methyl-adenine; 6-methyladenine; adenine methylation">6mA</C> modification.
 ```
 
 ## What to tag
@@ -41,7 +44,7 @@ The <C q="p53; TP53; tumor protein p53">p53</C> protein regulates <C q="apoptosi
 - Do NOT extract concepts into a separate list
 - Do NOT wrap output in markdown code blocks
 - Tag each unique concept only ONCE (first occurrence)
-- Context = the concept itself + expanded abbreviations + synonyms
+- Context MUST include 3-5 synonyms/related terms for better matching
 
 {ontology_info}
 {document_context}
