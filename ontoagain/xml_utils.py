@@ -187,7 +187,7 @@ def extract_concepts_from_xml(xml_text: str) -> list[dict]:
         xml_text: XML text with concept tags
 
     Returns:
-        List of dicts with keys: text, context, search, index
+        List of dicts with keys: text, context, index
         Index is the position in the list (for matching back after disambiguation)
     """
     root = parse_xml_fragment(xml_text)
@@ -198,7 +198,6 @@ def extract_concepts_from_xml(xml_text: str) -> list[dict]:
             "index": i,
             "text": elem.text or "",
             "context": elem.get("context", ""),
-            "search": elem.get("search", ""),
         })
 
     return concepts

@@ -7,8 +7,7 @@ class Concept(BaseModel):
     """A scientific concept extracted from text."""
 
     text: str  # Surface text from paper
-    context: str  # Resolved meaning
-    search: str  # Ontology search terms (semicolon-separated)
+    context: str  # Expanded form, synonyms, ontology terms (semicolon-separated)
     start: int  # Start position in original text
     end: int  # End position in original text
 
@@ -26,7 +25,6 @@ class TaggedConcept(BaseModel):
 
     text: str
     context: str
-    search: str
     start: int
     end: int
     matches: list[OntologyMatch]

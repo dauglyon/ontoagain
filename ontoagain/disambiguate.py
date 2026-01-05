@@ -278,7 +278,6 @@ def disambiguate_concept(
         return TaggedConcept(
             text=concept.text,
             context=concept.context,
-            search=concept.search,
             start=concept.start,
             end=concept.end,
             matches=[],
@@ -328,7 +327,6 @@ def disambiguate_concept(
     return TaggedConcept(
         text=concept.text,
         context=concept.context,
-        search=concept.search,
         start=concept.start,
         end=concept.end,
         matches=matches,
@@ -372,14 +370,11 @@ def disambiguate(
     if verbose:
         print("  Retrieving candidates from vector index...")
 
-    # Use search terms if available, otherwise fall back to context, then text
+    # Use context for vector search (replace semicolons with spaces for embedding)
     queries = []
     for c in concept_dicts:
-        if c["search"]:
-            # Use search terms as query (replace semicolons with spaces for embedding)
-            queries.append(c["search"].replace(";", " "))
-        elif c["context"]:
-            queries.append(c["context"])
+        if c["context"]:
+            queries.append(c["context"].replace(";", " "))
         else:
             queries.append(c["text"])
     all_candidates = search_index_batch(index_path, queries, top_k=top_k, verbose=verbose)
@@ -399,7 +394,6 @@ def disambiguate(
         Concept(
             text=c["text"],
             context=c["context"],
-            search=c["search"],
             start=0,  # Not used in XML flow
             end=0,
         )

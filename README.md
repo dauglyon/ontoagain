@@ -13,19 +13,19 @@ DNA methylation of 6mA in ciliates is associated with transcriptional activation
 
 **Output** (after IDENTIFY → DISAMBIGUATE pipeline):
 ```xml
-<concept context="DNA methylation, epigenetic modification" search="DNA methylation">
+<concept context="DNA methylation; epigenetic modification">
   DNA methylation
   <match ontology="GO" id="GO:0006306" label="DNA methylation"/>
 </concept> of
-<concept context="N6-methyladenine, adenine methylation" search="6mA; N6-methyladenine">
+<concept context="6mA; N6-methyladenine; adenine methylation">
   6mA
   <match ontology="CHEBI" id="CHEBI:21891" label="N6-methyladenine"/>
 </concept> in
-<concept context="ciliate protozoans, Ciliophora" search="ciliates; Ciliophora">
+<concept context="ciliates; ciliate protozoans; Ciliophora">
   ciliates
   <match ontology="NCBITAXON" id="NCBITaxon:5878" label="Ciliophora"/>
 </concept> is associated with
-<concept context="activation of gene transcription" search="transcriptional activation">
+<concept context="transcriptional activation; gene activation">
   transcriptional activation
   <match ontology="GO" id="GO:0045893" label="positive regulation of transcription"/>
 </concept>.
@@ -68,7 +68,7 @@ OntoAgain combines the **semantic understanding of LLMs** with the **precision o
 
 Unlike OntoGPT which does both in a single pass, OntoAgain separates:
 
-- **IDENTIFY**: LLM extracts concepts with rich context (expanded abbreviations, synonyms, search terms)
+- **IDENTIFY**: LLM extracts concepts with rich context (expanded abbreviations, synonyms, ontology-friendly terms)
 - **DISAMBIGUATE**: Vector search retrieves candidates, LLM verifies best match
 
 This separation means each phase can use different models (fast/cheap for extraction, precise for verification) and the grounding step can scale to ontologies with millions of terms.

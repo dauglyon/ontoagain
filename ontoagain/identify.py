@@ -371,7 +371,6 @@ def parse_xml_output(xml_text: str) -> list[Concept]:
     for concept_elem in root.findall(".//concept"):
         concept_text = concept_elem.text or ""
         concept_context = concept_elem.get("context", "")
-        concept_search = concept_elem.get("search", "")
 
         # Find position in original text
         start, end = _find_position(original_text, concept_text, concepts)
@@ -381,7 +380,6 @@ def parse_xml_output(xml_text: str) -> list[Concept]:
                 Concept(
                     text=concept_text.strip(),
                     context=concept_context,
-                    search=concept_search,
                     start=start,
                     end=end,
                 )
