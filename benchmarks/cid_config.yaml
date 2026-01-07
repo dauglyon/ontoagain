@@ -1,5 +1,5 @@
 ontologies:
-  - path: cid.obo
+  - path: benchmarks/cid.obo
     description: |
       Chemical-Induced-Disease (CID) relationships ONLY.
 

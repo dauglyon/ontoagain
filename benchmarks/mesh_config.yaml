@@ -1,5 +1,5 @@
 ontologies:
-  - path: d2015.bin
+  - path: data/bc5cdr/d2015.bin
     description: |
       MESH 2015 Descriptors (D-numbers) - the main MESH controlled vocabulary.
 
@@ -21,7 +21,7 @@ ontologies:
       - "Hepatotoxicity" NOT "Liver Diseases"
     term_format: "Capitalized noun phrases like 'Acetaminophen', 'Cardiotoxicity', 'Delirium'"
 
-  - path: c2015.bin
+  - path: data/bc5cdr/c2015.bin
     description: |
       MESH 2015 Supplementary Concepts (C-numbers) - specific named substances.
 

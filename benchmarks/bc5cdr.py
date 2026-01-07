@@ -142,16 +142,20 @@ def evaluate_relations(
     return {"precision": precision, "recall": recall, "f1": f1}
 
 
-def get_corpus_path(split: str = "test") -> Path:
+def get_corpus_path(split: str = "test", data_dir: Path | None = None) -> Path:
     """Get the path to a BC5CDR corpus split.
 
     Args:
         split: One of "train", "dev", or "test"
+        data_dir: Base directory containing CDR_Data. Defaults to benchmarks/data.
 
     Returns:
         Path to the PubTator file
     """
-    base = Path(__file__).parent / "data" / "CDR_Data" / "CDR.Corpus.v010516"
+    if data_dir is None:
+        data_dir = Path(__file__).parent / "data"
+
+    base = data_dir / "CDR_Data" / "CDR.Corpus.v010516"
 
     split_map = {
         "train": "CDR_TrainingSet.PubTator.txt",

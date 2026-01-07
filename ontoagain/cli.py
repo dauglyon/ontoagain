@@ -582,6 +582,10 @@ def benchmark_cmd(
         Path,
         typer.Option("--index", "-i", help="Path to concept index (e.g., MESH)"),
     ],
+    data_dir: Annotated[
+        Path,
+        typer.Option("--data", "-d", help="Path to benchmark data directory (contains CDR_Data/)"),
+    ] = Path("benchmarks/data"),
     rel_index: Annotated[
         Optional[Path],
         typer.Option("--rel-index", "-r", help="Path to relationship index (e.g., CID)"),
@@ -620,13 +624,18 @@ def benchmark_cmd(
     Evaluates the full pipeline (IDENTIFY → DISAMBIGUATE → RELATE-EXTRACT)
     against the BC5CDR Chemical-Disease Relation corpus.
 
-    Requires a MESH index for concept disambiguation.
+    Requires a MESH index for concept disambiguation and BC5CDR data files.
     """
     from benchmarks.bc5cdr import load_pubtator, get_corpus_path, evaluate_relations
 
     if not index_path.exists():
         typer.echo(f"Error: Index not found: {index_path}", err=True)
-        typer.echo("Build MESH index with: onto index benchmarks/mesh_config.yaml -O indexes/mesh")
+        typer.echo("Build MESH index with: onto index benchmarks/mesh_config.yaml -O data/indexes/mesh")
+        raise typer.Exit(1)
+
+    if not data_dir.exists():
+        typer.echo(f"Error: Data directory not found: {data_dir}", err=True)
+        typer.echo("Download BC5CDR corpus to benchmarks/data/")
         raise typer.Exit(1)
 
     if verbose:
@@ -637,7 +646,11 @@ def benchmark_cmd(
         typer.echo("")
 
     # Load documents
-    corpus_path = get_corpus_path(split)
+    corpus_path = get_corpus_path(split, data_dir)
+    if not corpus_path.exists():
+        typer.echo(f"Error: Corpus file not found: {corpus_path}", err=True)
+        typer.echo(f"Expected BC5CDR data at: {data_dir}/CDR_Data/CDR.Corpus.v010516/")
+        raise typer.Exit(1)
     documents = load_pubtator(corpus_path)
 
     # Filter by specific PMIDs if provided

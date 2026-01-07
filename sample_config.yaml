@@ -7,7 +7,7 @@
 #   onto index sample_config.yaml -O my-index -v
 
 ontologies:
-  - path: ontologies/go.obo
+  - path: data/ontologies/go.obo
     description: |
       Gene Ontology (GO) - biological processes, molecular functions, and cellular components.
 
@@ -17,7 +17,7 @@ ontologies:
       - Cellular components (e.g., "nucleus", "mitochondria", "plasma membrane")
     term_format: "Lowercase phrases like 'regulation of transcription', 'protein kinase activity'"
 
-  - path: ontologies/chebi.obo
+  - path: data/ontologies/chebi.obo
     description: |
       Chemical Entities of Biological Interest (ChEBI) - chemical compounds and substances.
 
