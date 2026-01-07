@@ -31,13 +31,14 @@ The <C q="spectrometer; spectroscopic instrument; spectrometric device; optical 
 - Named entities with standard definitions
 - Specific processes or functions (not vague actions)
 - Methods, techniques, or assays with recognized names
+- Entities that participate in relationships (causes, affects, regulates, etc.)
 
 ## What NOT to tag
 
 - Vague phrases ("unicellular lineages", "eukaryotic genomes")
 - Bare adjectives ("multicellular", "transcriptional")
-- Overly common terms ("DNA", "cell", "protein")
 - Partial phrases or generic descriptions
+- Note: Common terms like "DNA", "cell", "protein" MAY be tagged if they participate in specific relationships in your target ontology
 
 ## Context quality
 

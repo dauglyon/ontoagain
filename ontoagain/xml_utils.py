@@ -190,22 +190,23 @@ def safe_get_text(elem: ET.Element | None) -> str:
 def extract_concepts_from_xml(xml_text: str) -> list[dict]:
     """Extract concept information from XML with concept tags.
 
-    Supports both <C q="..."> (compact) and <concept context="..."> (legacy) formats.
+    Supports both <C n="..." q="..."> (compact) and <concept context="..."> (legacy) formats.
 
     Args:
         xml_text: XML text with concept tags
 
     Returns:
-        List of dicts with keys: text, context, index
+        List of dicts with keys: text, context, index, n (concept ID if present)
         Index is the position in the list (for matching back after disambiguation)
     """
     root = parse_xml_fragment(xml_text)
     concepts = []
 
-    # Support both <C q="..."> (compact) and <concept context="..."> (legacy)
+    # Support both <C n="..." q="..."> (compact) and <concept context="..."> (legacy)
     for elem in root.findall(".//C") + root.findall(".//concept"):
         concepts.append({
             "index": len(concepts),
+            "n": elem.get("n", ""),  # Concept ID
             "text": elem.text or "",
             "context": elem.get("q", "") or elem.get("context", ""),
         })
@@ -219,8 +220,8 @@ def update_xml_with_matches(
 ) -> str:
     """Update concept tags in XML with nested match elements.
 
-    Supports both <C q="..."> (compact) and <concept context="..."> (legacy) formats.
-    Output uses readable <concept context="..."> format with nested <match/> elements.
+    Supports both <C n="..." q="..."> (compact) and <concept context="..."> formats.
+    Output uses compact <C n="..." q="..."><M .../></C> format.
 
     Args:
         xml_text: Original XML with concept tags
@@ -228,14 +229,15 @@ def update_xml_with_matches(
                  Each match is a dict with ontology, id, label.
 
     Returns:
-        Updated XML with <match/> elements nested inside concept tags
+        Updated XML with <M/> elements nested inside concept tags
     """
     result = xml_text
     offset = 0  # Track offset as we modify the string
     match_idx = 0
 
-    # Pattern to match both <C q="..."> and <concept context="..."> tags
-    pattern = r'<(C|concept)\s+(?:q|context)="([^"]*)"?>([^<]*)</(C|concept)>'
+    # Pattern to match both formats, capturing n attribute if present
+    # <C n="1" q="...">text</C> or <C q="...">text</C> or <concept context="...">text</concept>
+    pattern = r'<(C|concept)\s+(?:n="(\d+)"\s+)?(?:q|context)="([^"]*)"?>([^<]*)</(C|concept)>'
 
     for match in re.finditer(pattern, xml_text):
         if match_idx >= len(matches):
@@ -244,23 +246,25 @@ def update_xml_with_matches(
         concept_matches = matches[match_idx]
         match_idx += 1
 
-        # Get context and concept text
-        context = match.group(2)
-        concept_text = match.group(3)
+        # Get n, context, and concept text
+        n_attr = match.group(2)  # May be None
+        context = match.group(3)
+        concept_text = match.group(4)
 
-        # Build nested match elements
+        # Build nested match elements (compact format: <M id="..." o="..." l="..."/>)
         match_elements = []
         for m in concept_matches:
             match_elements.append(
-                f'<match ontology="{m["ontology"]}" id="{m["id"]}" label="{_escape_attr(m["label"])}"/>'
+                f'<M id="{m["id"]}" o="{m["ontology"]}" l="{_escape_attr(m["label"])}"/>'
             )
 
-        # Build new tag (always use readable <concept> format for output)
+        # Build new tag (compact format)
+        n_part = f'n="{n_attr}" ' if n_attr else ""
         if match_elements:
-            matches_xml = "\n  ".join(match_elements)
-            new_tag = f'<concept context="{_escape_attr(context)}">{concept_text}\n  {matches_xml}\n</concept>'
+            matches_xml = "".join(match_elements)
+            new_tag = f'<C {n_part}q="{_escape_attr(context)}">{concept_text}{matches_xml}</C>'
         else:
-            new_tag = f'<concept context="{_escape_attr(context)}">{concept_text}</concept>'
+            new_tag = f'<C {n_part}q="{_escape_attr(context)}">{concept_text}</C>'
 
         # Replace in result (accounting for offset from previous replacements)
         start = match.start() + offset

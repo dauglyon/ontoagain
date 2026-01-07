@@ -1,0 +1,39 @@
+ontologies:
+  - path: d2015.bin
+    description: |
+      MESH 2015 Descriptors (D-numbers) - the main MESH controlled vocabulary.
+
+      DISAMBIGUATION RULES FOR D-NUMBERS:
+
+      For DISEASES/ADVERSE EFFECTS - PREFER in this order:
+      1. Specific toxicity terms ending in "-toxicity": Cardiotoxicity > Cardiovascular Diseases
+      2. Specific syndromes/disorders: Delirium > Mental Disorders, Atrial Flutter > Arrhythmias
+      3. Disorder over symptom: "Anxiety Disorders" > "Anxiety", "Depressive Disorder" > "Depression"
+
+      For CHEMICALS - use D-numbers when:
+      - No C-number exists for the specific drug
+      - Text refers to a drug CLASS (anticonvulsants, beta-blockers)
+      - Well-established chemicals: Lithium, Dexamethasone, Isoproterenol
+
+      CRITICAL: When both general and specific disease terms match the concept:
+      - Select ONLY the most specific term
+      - "Cardiotoxicity" NOT "Cardiovascular Diseases"
+      - "Hepatotoxicity" NOT "Liver Diseases"
+    term_format: "Capitalized noun phrases like 'Acetaminophen', 'Cardiotoxicity', 'Delirium'"
+
+  - path: c2015.bin
+    description: |
+      MESH 2015 Supplementary Concepts (C-numbers) - specific named substances.
+
+      DISAMBIGUATION RULES FOR C-NUMBERS:
+
+      PREFER C-numbers over D-numbers for specific drug names:
+      - "lenalidomide" → C467567 (NOT D013792 Thalidomide)
+      - "bortezomib" → C400082 (NOT parent D-number)
+      - "sorafenib", "bevacizumab", "clopidogrel" → use their C-numbers
+
+      How to identify: C-number synonyms contain the EXACT lowercase drug name.
+
+      Use C-numbers for relationship SUBJECTS (the chemical causing the effect).
+      Use D-numbers for relationship OBJECTS (the adverse effect/disease).
+    term_format: "Lowercase drug/chemical names like 'lenalidomide', 'bevacizumab', 'sorafenib'"

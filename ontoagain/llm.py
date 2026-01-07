@@ -10,10 +10,27 @@ OpenAI-compatible (e.g., CBORG):
     OPENAI_API_KEY=your-key
 """
 
+import asyncio
 import os
 
 import instructor
 from litellm import acompletion, completion
+
+# Reusable event loop to avoid LiteLLM async worker conflicts
+_event_loop = None
+
+
+def run_async(coro):
+    """Run an async coroutine, reusing the same event loop.
+
+    This avoids LiteLLM's logging worker conflicts that occur when
+    asyncio.run() is called multiple times (each creates a new loop).
+    """
+    global _event_loop
+    if _event_loop is None or _event_loop.is_closed():
+        _event_loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(_event_loop)
+    return _event_loop.run_until_complete(coro)
 
 
 def get_client(model: str = "anthropic/claude-sonnet"):

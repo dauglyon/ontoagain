@@ -6,7 +6,7 @@ import re
 import time
 from pathlib import Path
 
-from ontoagain.llm import call_llm, call_llm_async, get_client
+from ontoagain.llm import call_llm, call_llm_async, get_client, run_async
 from ontoagain.models import Concept, OntologyMetadata
 from ontoagain.xml_utils import (
     fix_truncated_xml,
@@ -368,6 +368,28 @@ def combine_chunk_outputs(chunks: list[str], overlap: int = CHUNK_OVERLAP_CHARS)
     return combined
 
 
+def add_concept_ids(xml_text: str) -> str:
+    """Add incrementing n= IDs to concept tags.
+
+    Takes XML with <C q="...">text</C> tags and adds n="1", n="2", etc.
+
+    Args:
+        xml_text: XML with concept tags
+
+    Returns:
+        XML with n= attributes added to each concept
+    """
+    counter = [0]  # Use list for closure mutability
+
+    def replace_with_id(match):
+        counter[0] += 1
+        # Insert n="X" after <C
+        return f'<C n="{counter[0]}" {match.group(1)}'
+
+    # Match <C followed by q=" or space
+    return re.sub(r'<C\s+(q=")', replace_with_id, xml_text)
+
+
 def identify(
     text: str,
     model: str = DEFAULT_MODEL,
@@ -407,6 +429,9 @@ def identify(
             text, model, ontology_info, document_context="", verbose=verbose
         )
 
+        # Add incrementing IDs to concepts
+        result = add_concept_ids(result)
+
         if verbose:
             print(f"LLM call complete. Response length: {len(result) if result else 0} chars")
 
@@ -424,13 +449,17 @@ def identify(
         print(f"  Chunks: {len(chunks)} (sizes: {min(chunk_sizes)}-{max(chunk_sizes)}, avg {sum(chunk_sizes)//len(chunks)})", flush=True)
         print(flush=True)
 
-    tagged_chunks = asyncio.run(
+    tagged_chunks = run_async(
         identify_parallel(chunks, model, ontology_info, max_concurrent, verbose)
     )
 
     # Combine chunks
     result = combine_chunk_outputs(tagged_chunks)
-    final_concepts = result.count("<C ") + result.count("<concept ")
+
+    # Add incrementing IDs to concepts
+    result = add_concept_ids(result)
+
+    final_concepts = result.count("<C n=")
 
     if verbose:
         print(flush=True)

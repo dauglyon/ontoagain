@@ -1,4 +1,4 @@
-"""DISAMBIGUATE agent - map concepts to ontology terms."""
+"""DISAMBIGUATE agent - map concepts to ontology terms (batch processing)."""
 
 import asyncio
 import json
@@ -6,24 +6,18 @@ import re
 import time
 from pathlib import Path
 
-from ontoagain.index import search_index, search_index_batch
-from ontoagain.llm import call_llm, call_llm_async, get_client
-from ontoagain.models import Concept, OntologyMatch, OntologyMetadata, TaggedConcept
+from ontoagain.index import search_index_batch
+from ontoagain.llm import call_llm, call_llm_async, get_client, run_async
+from ontoagain.models import Concept, OntologyMatch, OntologyMetadata
 from ontoagain.xml_utils import extract_concepts_from_xml, update_xml_with_matches
 
-# Load prompt templates
-PROMPT_PATH = Path(__file__).parent / "prompts" / "disambiguate.txt"
+# Load prompt template
 BATCH_PROMPT_PATH = Path(__file__).parent / "prompts" / "disambiguate_batch.txt"
 
 # Batching parameters
 MIN_OVERLAP_RATIO = 0.3  # 30% candidate overlap to join a cluster
 MIN_BATCH_SIZE = 5  # Minimum concepts per LLM call (merge small clusters)
 MAX_BATCH_SIZE = 20  # Max concepts per LLM call
-
-
-def load_prompt() -> str:
-    """Load the single-concept disambiguate prompt template."""
-    return PROMPT_PATH.read_text()
 
 
 def load_batch_prompt() -> str:
@@ -404,88 +398,6 @@ async def disambiguate_parallel(
     return all_matches
 
 
-def disambiguate_concept(
-    concept: Concept,
-    index_path: Path,
-    model: str = "claude-sonnet-4-20250514",
-    top_k: int = 20,
-    verbose: bool = False,
-) -> TaggedConcept:
-    """Disambiguate a single concept to ontology terms.
-
-    Args:
-        concept: Concept from IDENTIFY
-        index_path: Path to LanceDB index
-        model: LLM model to use
-        top_k: Number of candidates to retrieve
-        verbose: Print debug info
-
-    Returns:
-        TaggedConcept with ontology matches
-    """
-    # Retrieve candidates
-    query = concept.context if concept.context else concept.text
-    candidates = search_index(index_path, query, top_k=top_k)
-
-    if not candidates:
-        return TaggedConcept(
-            text=concept.text,
-            context=concept.context,
-            start=concept.start,
-            end=concept.end,
-            matches=[],
-        )
-
-    # Build prompt
-    prompt_template = load_prompt()
-    prompt = prompt_template.replace("{concept_text}", concept.text)
-    prompt = prompt.replace("{concept_context}", concept.context)
-    prompt = prompt.replace("{candidates}", format_candidates(candidates))
-
-    # Call LLM
-    client, model_name = get_client(model)
-
-    if verbose:
-        print(f"  Disambiguating: {concept.text}")
-
-    messages = [{"role": "user", "content": prompt}]
-    result = call_llm(client, model_name, messages)
-
-    # Parse result
-    try:
-        selected_ids = json.loads(result.strip())
-    except json.JSONDecodeError:
-        # Try to extract JSON array from response
-        import re
-        match = re.search(r"\[.*?\]", result, re.DOTALL)
-        if match:
-            selected_ids = json.loads(match.group())
-        else:
-            selected_ids = []
-
-    # Build matches from selected IDs
-    matches = []
-    candidate_map = {c["id"]: c for c in candidates}
-    for term_id in selected_ids:
-        if term_id in candidate_map:
-            c = candidate_map[term_id]
-            matches.append(
-                OntologyMatch(
-                    ontology=c["ontology"],
-                    id=c["id"],
-                    label=c["label"],
-                )
-            )
-
-    return TaggedConcept(
-        text=concept.text,
-        context=concept.context,
-        start=concept.start,
-        end=concept.end,
-        matches=matches,
-    )
-
-
 def disambiguate(
     xml_input: str,
     index_path: Path,
@@ -558,7 +470,7 @@ def disambiguate(
     ]
 
     # Step 3: Disambiguate each cluster
-    all_matches = asyncio.run(
+    all_matches = run_async(
         disambiguate_parallel(
             clusters, concepts, all_candidates, model,
             max_concurrent, verbose, ontology_metadata

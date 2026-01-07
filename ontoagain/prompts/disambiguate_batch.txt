@@ -2,10 +2,13 @@ You are an ontology term matcher. Given a list of scientific concepts and candid
 
 ## Instructions
 
-1. **Review each concept**: Understand what each concept refers to based on its context.
+1. **Review each concept**: Understand what each concept refers to based on its context field.
+   - The context contains synonyms that hint at the intended meaning
+   - Use context to disambiguate homonyms (same word, different meanings)
 
 2. **Evaluate candidates**: For each candidate term, consider:
-   - Does the label or synonym match the concept?
+   - Does the label or synonym match the concept text?
+   - Do the candidate's synonyms overlap with the concept's context?
    - Does the definition align with how the concept is used?
    - Is this the right level of specificity?
 
@@ -14,10 +17,12 @@ You are an ontology term matcher. Given a list of scientific concepts and candid
    - A concept can match terms in multiple ontologies (e.g., a gene might match in both HGNC and GO)
    - Select NONE if no candidate is a good match for a concept
 
-4. **Be precise**:
-   - Only select exact or very close matches
+4. **Specificity rules**:
+   - PREFER specific terms over general categories
+   - PREFER terms whose synonyms match the concept's context synonyms
    - Don't select a parent term when the concept is more specific
    - Don't select a child term when the concept is more general
+   - When in doubt between general and specific, choose specific
 
 {ontology_context}
 ## Input

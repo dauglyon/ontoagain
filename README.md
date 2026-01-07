@@ -1,34 +1,31 @@
 # OntoAgain
 
-LLM-powered ontology term identification and disambiguation for scientific papers.
+LLM-powered ontology term identification, disambiguation, and relationship extraction for scientific papers.
 
 ## What It Does
 
-OntoAgain extracts scientific concepts from research papers and maps them to ontology terms.
+OntoAgain extracts scientific concepts from research papers, maps them to ontology terms, and extracts relationships between them.
 
 **Input** (plain text from a paper):
 ```
 DNA methylation of 6mA in ciliates is associated with transcriptional activation.
 ```
 
-**Output** (after IDENTIFY → DISAMBIGUATE pipeline):
+**Output** (after CONCEPT-EXTRACT → CONCEPT-DISAMBIGUATE → RELATION-EXTRACT → RELATION-DISAMBIGUATE pipeline):
+
+Concepts with ontology mappings:
 ```xml
-<concept context="DNA methylation; epigenetic modification">
-  DNA methylation
-  <match ontology="GO" id="GO:0006306" label="DNA methylation"/>
-</concept> of
-<concept context="6mA; N6-methyladenine; adenine methylation">
-  6mA
-  <match ontology="CHEBI" id="CHEBI:21891" label="N6-methyladenine"/>
-</concept> in
-<concept context="ciliates; ciliate protozoans; Ciliophora">
-  ciliates
-  <match ontology="NCBITAXON" id="NCBITaxon:5878" label="Ciliophora"/>
-</concept> is associated with
-<concept context="transcriptional activation; gene activation">
-  transcriptional activation
-  <match ontology="GO" id="GO:0045893" label="positive regulation of transcription"/>
-</concept>.
+<C n="1" q="DNA methylation; epigenetic modification">DNA methylation<M id="GO:0006306" o="GO" l="DNA methylation"/></C> of
+<C n="2" q="6mA; N6-methyladenine">6mA<M id="CHEBI:21891" o="CHEBI" l="N6-methyladenine"/></C> in
+<C n="3" q="ciliates; Ciliophora">ciliates<M id="NCBITaxon:5878" o="NCBITAXON" l="Ciliophora"/></C> is associated with
+<C n="4" q="transcriptional activation">transcriptional activation<M id="GO:0045893" o="GO" l="positive regulation of transcription"/></C>.
+```
+
+Extracted relationships (with predicate mapped to RO):
+```xml
+<relations>
+<R s="GO:0006306" o="GO:0045893" p="RO:0002411" pl="causally upstream of" pr="associated_with" e="1,4">DNA methylation is associated with transcriptional activation in ciliates</R>
+</relations>
 ```
 
 ## Why OntoAgain?
@@ -50,16 +47,44 @@ OntoAgain combines the **semantic understanding of LLMs** with the **precision o
 
 ```
 ┌─────────────────┐     ┌─────────────────────┐     ┌───────────────────┐
-│  Research Paper │────▶│  IDENTIFY (LLM)     │────▶│  Concepts (XML)   │
-│                 │     │  Extract concepts   │     │                   │
-└─────────────────┘     │  with context       │     └────────┬──────────┘
-                        └─────────────────────┘              │
+│  Research Paper │────▶│  CONCEPT-EXTRACT    │────▶│  concepts.xml     │
+│                 │     │  (LLM)              │     │  <C n="1" q=".."> │
+└─────────────────┘     └─────────────────────┘     └────────┬──────────┘
+                                                             │
+                        ┌─────────────────────┐              ▼
+                        │  Concept Index      │     ┌───────────────────┐
+                        │  (LanceDB + BGE-M3) │────▶│ CONCEPT-DISAMBIG  │
+                        │  3M+ terms          │     │ (Vector + LLM)    │
+                        └─────────────────────┘     └────────┬──────────┘
+                                                             │
                                                              ▼
-┌─────────────────┐     ┌─────────────────────┐     ┌───────────────────┐
-│  Tagged Output  │◀────│  DISAMBIGUATE       │◀────│  Vector Index     │
-│  with ontology  │     │  Retrieve candidates│     │  3M+ terms        │
-│  mappings       │     │  + LLM verification │     │  (LanceDB)        │
-└─────────────────┘     └─────────────────────┘     └───────────────────┘
+                                                    ┌───────────────────┐
+                                                    │  tagged.xml       │
+                                                    │  <C><M id=".."/>  │
+                                                    └────────┬──────────┘
+                                                             │
+                        ┌─────────────────────┐              ▼
+                        │  RELATION-EXTRACT   │◀────────────────────────┘
+                        │  (LLM)              │
+                        └────────┬────────────┘
+                                 │
+                                 ▼
+                        ┌───────────────────┐
+                        │  relations.xml    │
+                        │  <R s=".." p="..">│
+                        └────────┬──────────┘
+                                 │
+┌─────────────────────┐          ▼
+│  Relation Index     │  ┌───────────────────┐
+│  (e.g., RO)         │─▶│ RELATION-DISAMBIG │
+└─────────────────────┘  │ (Vector + LLM)    │
+                         └────────┬──────────┘
+                                  │
+                                  ▼
+                         ┌────────────────────┐
+                         │  relations-final.xml│
+                         │  <R p="RO:001" ..> │
+                         └────────────────────┘
 ```
 
 ## Key Innovations
@@ -68,8 +93,10 @@ OntoAgain combines the **semantic understanding of LLMs** with the **precision o
 
 Unlike OntoGPT which does both in a single pass, OntoAgain separates:
 
-- **IDENTIFY**: LLM extracts concepts with rich context (expanded abbreviations, synonyms, ontology-friendly terms)
-- **DISAMBIGUATE**: Vector search retrieves candidates, LLM verifies best match
+- **CONCEPT-EXTRACT**: LLM extracts concepts with rich context (expanded abbreviations, synonyms, ontology-friendly terms)
+- **CONCEPT-DISAMBIGUATE**: Vector search retrieves candidates, LLM verifies best match
+- **RELATION-EXTRACT**: LLM finds relationships between matched concepts
+- **RELATION-DISAMBIGUATE**: Maps predicate verbs to Relation Ontology terms
 
 This separation means each phase can use different models (fast/cheap for extraction, precise for verification) and the grounding step can scale to ontologies with millions of terms.
 
@@ -102,82 +129,35 @@ Compare to OntoGPT's structured JSON output which loses document structure.
 
 A novel optimization: concepts with overlapping candidate sets are grouped into batches for a single LLM call. For 120 concepts, this reduced 120 LLM calls to 21 batches—an **83% reduction** in API calls.
 
-### 6. Ontology Grounding Metadata
+### 6. Concept ID Tracking
 
-The config file includes descriptions that help the LLM avoid category errors:
+Each concept gets an incrementing ID (`n="1"`, `n="2"`, etc.) that flows through the pipeline. Relationships reference these IDs in the `e` (evidence) attribute, providing traceability from relationships back to the supporting concepts.
 
-```yaml
-ontologies:
-  - path: ontologies/ncbitaxon.obo
-    description: "Taxonomic classification - use ONLY for species names, NOT biological concepts"
-```
+### 7. Compact XML Format
 
-This prevents matching "transposable element" to an NCBITaxon entry for a bacterium that contains transposons.
+Efficient format for pipeline output:
+- `<C n="ID" q="context">text<M id="..." o="..." l="..."/></C>` for concepts
+- `<R s="subj" o="obj" p="pred" e="1,2">summary</R>` for relationships
 
 ## Benchmarks
 
-### Head-to-Head: OntoAgain vs OntoGPT
+### BC5CDR: Chemical-Induced-Disease Relation Extraction
 
-Tested on a 2KB excerpt from a Nature Genetics paper about DNA methylation in eukaryotes.
+Tested on the BioCreative V CDR corpus (Chemical-Disease Relations). The benchmark evaluates the full pipeline: concept extraction, disambiguation to MESH terms, and relationship extraction.
 
-| Metric | OntoAgain | OntoGPT |
-|--------|-----------|---------|
-| Concepts extracted | 12 | 12 |
-| **Grounded to ontology** | **8 (67%)** | 4 (33%) |
-| **Total time** | **29s** | 166s |
-| Ontologies matched | GO, CHEBI, NCBITaxon, PR | NCBITaxon only |
+| Metric | OntoAgain |
+|--------|-----------|
+| **F1 Score** | **60.5%** |
+| Precision | 56.1% |
+| Recall | 65.7% |
 
-**OntoAgain grounded matches:**
-| Concept | Ontology | Term ID |
-|---------|----------|---------|
-| DNA methylation | GO | GO:0141119 |
-| 5-methylcytosine | CHEBI | CHEBI:27551 |
-| N6-methyladenine | CHEBI | CHEBI:28871 |
-| ciliates | NCBITaxon | NCBITaxon:5878 |
-| Chlamydomonas | NCBITaxon | NCBITaxon:3055 |
-| H3K4me3 | CHEBI | CHEBI:85043 |
-| transcriptional activation | GO | GO:0051091 |
-| DNA methyltransferases | PR | PR:P26358, PR:Q9Y6K1, PR:Q9UBC3 |
+*20 documents from test split, 37 gold relations*
 
-OntoGPT only grounded 4 terms (all NCBITaxon) because its `desiccation` template—the closest multi-ontology option—is domain-specific. Using `go_simple` extracted terms but failed to ground any to real GO IDs.
+**Index configuration:**
+- MESH 2015 (D-numbers + C-numbers): 259,895 terms
+- CID relationship ontology for extraction guidance
 
-### Full Paper Processing
-
-Tested on complete Nature Genetics paper about DNA methylation in eukaryotes (109KB).
-
-| Phase | Metric | Sequential | Parallel |
-|-------|--------|------------|----------|
-| **IDENTIFY** | Paper size | 108,886 chars | 108,886 chars |
-| | Chunks processed | 6 (avg 18KB each) | 6 (max 4 concurrent) |
-| | Concepts extracted | 267 | 248 |
-| | Time | 15m 30s | **5m 28s** |
-| **DISAMBIGUATE** | LLM batches | 49 | 45 (max 6 concurrent) |
-| | Time | 2m 22s | **37s** |
-| **RESULTS** | Matched to ontology | 107 (40%) | 72 (29%) |
-| **TOTAL** | End-to-end time | ~18 minutes | **~6 minutes** |
-
-**~3x speedup** with parallel processing (default). Use `--max-concurrent 1` for sequential.
-
-**Sample matched concepts:**
-- Chemicals: 5-methylcytosine → CHEBI:65274, N6-methyladenine → CHEBI:28871
-- Species: *Chlamydomonas reinhardtii* → NCBITaxon:3055, ciliates → NCBITaxon:5878
-- Proteins: METTL3 → PR, METTL14 → PR, DNA methyltransferases → PR:000006606-8
-- Processes: DNA methylation → GO, transcriptional activation → GO
-
-**Unmatched concepts** (would need additional ontologies):
-- Methods/tools: Oxford Nanopore, BEDTools, StringTie, IGV (needs OBI or software ontology)
-- Genomic features: transcriptional start sites (needs SO - Sequence Ontology)
-- Domain-specific: AMT1/2/5/6/7 (novel proteins specific to this paper)
-
-### Index Statistics
-
-| Ontology | Terms Indexed |
-|----------|---------------|
-| GO (Gene Ontology) | 39,365 |
-| CHEBI (Chemical Entities) | 204,727 |
-| NCBITaxon (Taxonomy) | 2,708,808 |
-| PR (Protein Ontology) | 360,304 |
-| **Total** | **3,313,204** |
+See [Running Benchmarks](#running-benchmarks) for setup instructions.
 
 ## Installation
 
@@ -197,7 +177,7 @@ onto recommend-ontologies paper.txt --verbose
 
 ### 2. Build an ontology index
 
-Download ontologies and create a config:
+Download ontologies:
 
 ```bash
 mkdir ontologies
@@ -205,33 +185,28 @@ curl -Lo ontologies/go.obo http://purl.obolibrary.org/obo/go.obo
 curl -Lo ontologies/chebi.obo http://purl.obolibrary.org/obo/chebi.obo
 ```
 
-Create `ontologies.yaml`:
-
-```yaml
-ontologies:
-  - path: ontologies/go.obo
-    description: "Biological processes, molecular functions, and cellular components"
-    term_format: "Lowercase phrases like 'regulation of transcription', 'protein kinase activity'"
-
-  - path: ontologies/chebi.obo
-    description: "Chemical entities including small molecules, drugs, and metabolites"
-    term_format: "Chemical names like 'ethanol', 'adenosine triphosphate'"
-```
-
-Build the index:
+Edit `sample_config.yaml` to point to your ontologies, then build the index:
 
 ```bash
-onto index ontologies.yaml -O my-index -v
+onto index sample_config.yaml -O my-index -v
 ```
+
+The config file contains descriptions that guide the LLM during disambiguation. See `sample_config.yaml` for the format.
 
 ### 3. Run the pipeline
 
 ```bash
-# Extract concepts
-onto identify paper.txt --index my-index -o concepts.xml -v
+# Step 1: Extract concepts
+onto concept-extract paper.txt --index my-index -o concepts.xml -v
 
-# Match to ontology terms
-onto disambiguate concepts.xml --index my-index -o tagged.xml -v
+# Step 2: Match concepts to ontology terms
+onto concept-disambiguate concepts.xml --index my-index -o tagged.xml -v
+
+# Step 3: Extract relationships (optional)
+onto relation-extract tagged.xml -o relations.xml -v
+
+# Step 4: Map predicates to RO (optional)
+onto relation-disambiguate relations.xml --rel-index ro-index -o relations-mapped.xml -v
 ```
 
 ## Commands
@@ -240,8 +215,12 @@ onto disambiguate concepts.xml --index my-index -o tagged.xml -v
 |---------|-------------|
 | `onto recommend-ontologies <paper>` | Suggest ontologies for a paper |
 | `onto index <config.yaml> -O <output>` | Build vector index from ontologies |
-| `onto identify <paper> [--index <path>]` | Extract concepts as XML |
-| `onto disambiguate <xml> --index <path>` | Match concepts to ontology terms |
+| `onto update-metadata <config.yaml> -i <index>` | Update index metadata without re-embedding |
+| `onto concept-extract <paper> [--index <path>]` | Extract concepts as XML |
+| `onto concept-disambiguate <xml> --index <path>` | Match concepts to ontology terms |
+| `onto relation-extract <xml>` | Extract relationships between matched concepts |
+| `onto relation-disambiguate <xml> --rel-index <path>` | Map predicates to relationship ontology |
+| `onto benchmark --index <path> --rel-index <path>` | Run BC5CDR benchmark |
 
 ## LLM Configuration
 
@@ -254,7 +233,7 @@ export OPENAI_API_BASE=https://api.example.com
 export OPENAI_API_KEY=your-key
 
 # Specify model
-onto identify paper.txt --model anthropic/claude-sonnet
+onto concept-extract paper.txt --model anthropic/claude-sonnet
 ```
 
 ## Architecture
@@ -264,6 +243,7 @@ ontoagain/
 ├── cli.py           # Typer CLI
 ├── identify.py      # Concept extraction with chunking
 ├── disambiguate.py  # Ontology matching with batching
+├── relate.py        # Relationship extraction and disambiguation
 ├── recommend.py     # Ontology recommendations
 ├── index.py         # LanceDB vector index
 ├── models.py        # Pydantic data models
@@ -290,29 +270,70 @@ ontoagain/
 | **Output** | Inline XML annotation | Structured JSON/YAML/RDF |
 | **Hallucination risk** | Low (selection from candidates) | Higher (LLM generates IDs) |
 | **Multi-ontology** | Single run across all indexed ontologies | Separate template per ontology |
-| **Speed** | ~29s for extract+ground | ~166s (template-dependent) |
-| **Grounding rate** | 67% on test text | 33% on test text |
+| **Relationship extraction** | Concept-first with evidence tracking | Template-driven |
 | **Use case** | Document annotation | Knowledge base population |
 
 **Key tradeoffs:**
 - OntoGPT excels at structured relation extraction with predefined schemas
 - OntoAgain excels at exploratory annotation across multiple ontologies without schema design
 
+## Running Benchmarks
+
+### BC5CDR Setup
+
+The BC5CDR benchmark requires:
+
+1. **BC5CDR Corpus** - Download from BioCreative:
+   ```bash
+   mkdir -p benchmarks/data
+   cd benchmarks/data
+   # Download CDR_Data.zip from https://biocreative.bioinformatics.udel.edu/resources/corpora/biocreative-v-cdr-corpus/
+   unzip CDR_Data.zip
+   ```
+
+2. **MESH 2015 Vocabulary** - The corpus uses MESH 2015 annotations:
+   ```bash
+   cd benchmarks
+   # Download from NLM archive
+   curl -O https://nlmpubs.nlm.nih.gov/projects/mesh/2015/asciimesh/d2015.bin
+   curl -O https://nlmpubs.nlm.nih.gov/projects/mesh/2015/asciimesh/c2015.bin
+   cd ..
+   ```
+
+3. **Build Indexes**:
+   ```bash
+   # Build MESH index
+   onto index benchmarks/mesh_config.yaml -O indexes/mesh -v
+
+   # Build CID relationship index
+   onto index benchmarks/cid_config.yaml -O indexes/cid -v
+   ```
+
+4. **Run Benchmark**:
+   ```bash
+   onto benchmark --index indexes/mesh --rel-index indexes/cid -n 20 -v
+   ```
+
+### Sample Config Files
+
+- `sample_config.yaml` - Template for setting up your own ontologies
+- `benchmarks/mesh_config.yaml` - MESH vocabulary with C/D-number guidance
+- `benchmarks/cid_config.yaml` - Chemical-Induced-Disease relationship extraction
+
 ## Future Work
+
+### Additional Benchmarks
+- Comparison with OntoGPT on BC5CDR
+- Other relation extraction corpora (DDI, ChemProt)
 
 ### Better Embeddings
 - Domain-specific models (BioLord, PubMedBERT)
 - Multi-vector representations for synonyms
 - Fine-tuning on ontology structure
 
-### Parallelization
-- Async LLM calls during chunking
-- Concurrent batch processing
-- GPU-accelerated search
-
 ### Model Optimization
-- Smaller models for IDENTIFY (Haiku, local LLMs)
-- Reserve larger models for DISAMBIGUATE
+- Smaller models for extraction (Haiku, local LLMs)
+- Reserve larger models for disambiguation
 - Cost/quality tradeoff options
 
 ### Context Engineering

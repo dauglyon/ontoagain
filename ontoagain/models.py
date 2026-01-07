@@ -78,3 +78,25 @@ class OntologyMetadata(BaseModel):
     description: str  # What the ontology contains
     term_format: str  # How terms are formatted
     term_count: int  # Number of terms indexed
+
+
+class RawRelationship(BaseModel):
+    """Relationship extracted by LLM (before predicate disambiguation)."""
+
+    subject_id: str  # Ontology ID from <M/> tag (e.g., "D003000")
+    object_id: str  # Ontology ID from <M/> tag (e.g., "D006973")
+    predicate: str  # Relationship type only: "induces", "inhibits", "regulates"
+    concept_ids: list[str]  # Concept IDs (n values) supporting this relationship
+    summary: str  # Explanation of the relationship in document context
+
+
+class Relationship(BaseModel):
+    """Fully resolved relationship (after predicate disambiguation)."""
+
+    subject_id: str  # Ontology ID (e.g., "D003000")
+    object_id: str  # Ontology ID (e.g., "D006973")
+    predicate_id: str  # Relationship ontology ID (e.g., "RO:0002436")
+    predicate_label: str  # Relationship label (e.g., "causally_upstream_of")
+    predicate_raw: str  # Original LLM predicate (e.g., "induces")
+    concept_ids: list[str]  # Concept IDs (n values) supporting this relationship
+    summary: str  # Explanation of the relationship in document context

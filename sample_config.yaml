@@ -1,0 +1,34 @@
+# Sample OntoAgain configuration file
+#
+# This file defines which ontologies to index and provides descriptions
+# that guide the LLM during concept disambiguation and relationship extraction.
+#
+# Usage:
+#   onto index sample_config.yaml -O my-index -v
+
+ontologies:
+  - path: ontologies/go.obo
+    description: |
+      Gene Ontology (GO) - biological processes, molecular functions, and cellular components.
+
+      Use for:
+      - Biological processes (e.g., "apoptosis", "cell division", "DNA repair")
+      - Molecular functions (e.g., "kinase activity", "DNA binding")
+      - Cellular components (e.g., "nucleus", "mitochondria", "plasma membrane")
+    term_format: "Lowercase phrases like 'regulation of transcription', 'protein kinase activity'"
+
+  - path: ontologies/chebi.obo
+    description: |
+      Chemical Entities of Biological Interest (ChEBI) - chemical compounds and substances.
+
+      Use for:
+      - Small molecules and metabolites
+      - Drugs and pharmaceuticals
+      - Chemical classes and groups
+    term_format: "Chemical names like 'ethanol', 'adenosine triphosphate', 'glucose'"
+
+  # Add more ontologies as needed:
+  # - path: ontologies/hp.obo
+  #   description: |
+  #     Human Phenotype Ontology (HPO) - human phenotypic abnormalities.
+  #   term_format: "Clinical terms like 'Seizure', 'Hypotonia', 'Intellectual disability'"

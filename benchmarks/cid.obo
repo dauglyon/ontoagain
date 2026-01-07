@@ -1,0 +1,15 @@
+format-version: 1.4
+ontology: cid
+default-namespace: CID
+
+[Term]
+id: CID:0000001
+name: induces
+def: "A chemical causes or induces a disease as an adverse effect." []
+synonym: "causes" EXACT []
+synonym: "leads to" EXACT []
+synonym: "results in" EXACT []
+synonym: "associated with" RELATED []
+synonym: "triggers" EXACT []
+synonym: "produces" EXACT []
+

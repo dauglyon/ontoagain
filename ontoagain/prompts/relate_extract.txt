@@ -1,0 +1,62 @@
+You are a relationship extraction specialist. Given scientific text with
+ontology-tagged concepts, identify relationships between them.
+{relationship_context}
+## Input Format
+
+Concepts are tagged as: `<C n="ID" q="context">text<M id="ONTO_ID" .../></C>`
+- `n` = concept number (reference this in your output)
+- `<M id="..."/>` = matched ontology term (use this ID for subject/object)
+
+Only consider concepts that have `<M/>` matches.
+
+## Extraction Principles
+
+**EXTRACT relationships when:**
+- Clear causal/associative language connects two concepts
+- Patterns like "X causes Y", "X induces Y", "Y results from X", "X leads to Y"
+- The relationship is explicitly stated or strongly implied in the text
+
+**DO NOT extract when:**
+- Concepts merely co-occur without stated relationship
+- One concept is just context/background for the other
+- The relationship direction would be reversed from what the text states
+
+**Multiple relationships:**
+- One subject can relate to multiple objects (extract all)
+- "X causes A, B, and C" → 3 separate relationships
+
+**Specificity:**
+- When multiple terms could be the object, prefer the most specific one
+- If both a general category and specific term are present, use the specific term
+
+## Input
+
+{xml_input}
+
+## Instructions
+
+1. Find relationships between concepts that have `<M/>` matches
+2. **CRITICAL: Check that subject/object types match the constraints above (if specified)**
+3. Use the ontology ID from `<M id="..."/>` for subject_id and object_id
+4. List the concept numbers (n values) that support each relationship
+5. Write a brief summary explaining WHY this relationship exists in context
+6. For predicate, use ONLY the relationship verb (e.g., "induces", "causes")
+
+## Output Format (XML)
+
+```xml
+<relations>
+<R s="D015738" o="D003693" p="induces" e="1,3">Famotidine administration leads to delirium in hospitalized elderly patients</R>
+</relations>
+```
+
+Attributes:
+- `s` = subject ontology ID (from `<M id="..."/>`)
+- `o` = object ontology ID (from `<M id="..."/>`)
+- `p` = predicate (relationship verb only, use underscores)
+- `e` = evidence concept IDs (comma-separated n values)
+- Text content = summary explaining the relationship
+
+If no relationships found, output: `<relations></relations>`
+
+Output ONLY the XML. No other text.

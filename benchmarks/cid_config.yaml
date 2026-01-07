@@ -1,0 +1,32 @@
+ontologies:
+  - path: cid.obo
+    description: |
+      Chemical-Induced-Disease (CID) relationships ONLY.
+
+      CONSTRAINTS:
+      - Subject MUST be a CHEMICAL or DRUG
+      - Object MUST be the ADVERSE EFFECT directly caused by the chemical
+      - Direction: chemical → disease (never disease → disease)
+
+      CAUSAL LANGUAGE PATTERNS - EXTRACT these:
+      1. "X-induced Y" → X causes Y (e.g., "isoproterenol-induced cardiotoxicity")
+      2. "X causes/caused Y" or "X leads to Y"
+      3. "Y following/after X administration/treatment"
+      4. "Y associated with X therapy" (when describing adverse effects)
+      5. "X resulted in Y" or "X produced Y"
+      6. Lists: "X causes A, B, and C" → extract ALL THREE relationships
+
+      DO NOT EXTRACT - these are NOT adverse effects:
+      1. Treatment context: "X for treating Y" → Y is treated condition, not adverse effect
+      2. Pre-existing: "patients with Y received X" → Y is background
+      3. Mechanism only: "X activates receptors" → no adverse outcome mentioned
+      4. General categories when specific exists: prefer "Cardiotoxicity" over "Cardiovascular Diseases"
+
+      MULTIPLE ADVERSE EFFECTS:
+      When one chemical causes multiple effects, extract ALL:
+      "Lithium causes depression, cyanosis, and arrhythmia" → 3 separate relationships
+
+      SPECIFICITY:
+      - PREFER specific toxicity terms (-toxicity) over general disease categories
+      - PREFER specific syndromes over general disorders
+    term_format: "Verb phrases like 'induces', 'causes', 'leads to'"
