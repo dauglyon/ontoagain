@@ -11,6 +11,7 @@ from ontoagain.relate import (
     relate_extract,
     relate_disambiguate,
     _parse_relation_xml,
+    parse_raw_relationships_from_xml,
 )
 
 
@@ -65,18 +66,17 @@ class TestRelateExtract:
 
     def test_extract_basic(self):
         """Test basic relationship extraction with mocked LLM."""
-        # Use compact format with n= and M tags
-        xml = '''<C n="1" q="drug">clonidine<M id="MESH:D003000" o="MESH" l="clonidine"/></C> causes <C n="2" q="disease">hypertension<M id="MESH:D006973" o="MESH" l="hypertension"/></C>'''
+        xml = '''<Documents><D id="test"><C n="1" q="drug">clonidine<M id="MESH:D003000" o="MESH" l="clonidine"/></C> causes <C n="2" q="disease">hypertension<M id="MESH:D006973" o="MESH" l="hypertension"/></C></D></Documents>'''
 
-        # New XML format response
         mock_response = '''<relations>
 <R s="MESH:D003000" o="MESH:D006973" p="causes" e="1,2">clonidine causes hypertension</R>
 </relations>'''
 
-        with patch("ontoagain.relate.call_llm", return_value=mock_response):
+        with patch("ontoagain.relate.call_llm_async", return_value=mock_response):
             relationships = relate_extract(xml, model="test-model", verbose=False)
 
         assert len(relationships) == 1
+        assert relationships[0].doc_id == "test"
         assert relationships[0].subject_id == "MESH:D003000"
         assert relationships[0].object_id == "MESH:D006973"
         assert relationships[0].predicate == "causes"
@@ -85,16 +85,16 @@ class TestRelateExtract:
 
     def test_extract_multiple_relationships(self):
         """Test extraction of multiple relationships."""
-        xml = '''<C n="1" q="A">A<M id="A:1"/></C>
+        xml = '''<Documents><D id="test"><C n="1" q="A">A<M id="A:1"/></C>
 <C n="2" q="B">B<M id="B:1"/></C>
-<C n="3" q="C">C<M id="C:1"/></C>'''
+<C n="3" q="C">C<M id="C:1"/></C></D></Documents>'''
 
         mock_response = '''<relations>
 <R s="A:1" o="B:1" p="activates" e="1,2">A activates B</R>
 <R s="B:1" o="C:1" p="inhibits" e="2,3">B inhibits C</R>
 </relations>'''
 
-        with patch("ontoagain.relate.call_llm", return_value=mock_response):
+        with patch("ontoagain.relate.call_llm_async", return_value=mock_response):
             relationships = relate_extract(xml, model="test-model", verbose=False)
 
         assert len(relationships) == 2
@@ -103,22 +103,22 @@ class TestRelateExtract:
 
     def test_extract_no_relationships(self):
         """Test extraction when no relationships found."""
-        xml = '''<C n="1" q="A">A<M id="A:1"/></C>'''
+        xml = '''<Documents><D id="test"><C n="1" q="A">A<M id="A:1"/></C></D></Documents>'''
 
         mock_response = '<relations></relations>'
 
-        with patch("ontoagain.relate.call_llm", return_value=mock_response):
+        with patch("ontoagain.relate.call_llm_async", return_value=mock_response):
             relationships = relate_extract(xml, model="test-model", verbose=False)
 
         assert len(relationships) == 0
 
     def test_extract_handles_malformed_response(self):
         """Test graceful handling of malformed LLM response."""
-        xml = '''<C n="1" q="A">A<M id="A:1"/></C>'''
+        xml = '''<Documents><D id="test"><C n="1" q="A">A<M id="A:1"/></C></D></Documents>'''
 
         mock_response = "not valid xml"
 
-        with patch("ontoagain.relate.call_llm", return_value=mock_response):
+        with patch("ontoagain.relate.call_llm_async", return_value=mock_response):
             relationships = relate_extract(xml, model="test-model", verbose=False)
 
         assert len(relationships) == 0
@@ -134,6 +134,7 @@ class TestRelateDisambiguate:
 
         relationships = [
             RawRelationship(
+                doc_id="test",
                 subject_id="A:1",
                 object_id="B:1",
                 predicate="causes",
@@ -173,6 +174,7 @@ class TestRelateDisambiguate:
 
         relationships = [
             RawRelationship(
+                doc_id="test",
                 subject_id="A:1",
                 object_id="B:1",
                 predicate="weird_relation",
@@ -192,3 +194,54 @@ class TestRelateDisambiguate:
         assert results[0].predicate_label == ""
         assert results[0].predicate_raw == "weird_relation"
         assert results[0].concept_ids == ["1"]
+
+
+class TestParseRawRelationshipsFromXml:
+    """Tests for parsing raw relationships from XML."""
+
+    def test_parse_single_relationship(self):
+        """Test parsing a single relationship from XML."""
+        xml = '''<relations>
+<R d="doc1" s="MESH:D003000" o="MESH:D006973" p="causes" e="1,2">clonidine causes hypertension</R>
+</relations>'''
+        relationships = parse_raw_relationships_from_xml(xml)
+
+        assert len(relationships) == 1
+        assert relationships[0].doc_id == "doc1"
+        assert relationships[0].subject_id == "MESH:D003000"
+        assert relationships[0].object_id == "MESH:D006973"
+        assert relationships[0].predicate == "causes"
+        assert relationships[0].concept_ids == ["1", "2"]
+        assert relationships[0].summary == "clonidine causes hypertension"
+
+    def test_parse_multiple_relationships(self):
+        """Test parsing multiple relationships from XML."""
+        xml = '''<relations>
+<R d="doc1" s="A:1" o="B:1" p="activates" e="1,2">A activates B</R>
+<R d="doc2" s="C:1" o="D:1" p="inhibits" e="3,4">C inhibits D</R>
+</relations>'''
+        relationships = parse_raw_relationships_from_xml(xml)
+
+        assert len(relationships) == 2
+        assert relationships[0].doc_id == "doc1"
+        assert relationships[0].predicate == "activates"
+        assert relationships[1].doc_id == "doc2"
+        assert relationships[1].predicate == "inhibits"
+
+    def test_parse_empty_relations(self):
+        """Test parsing empty relations XML."""
+        xml = '<relations></relations>'
+        relationships = parse_raw_relationships_from_xml(xml)
+        assert len(relationships) == 0
+
+    def test_parse_missing_attributes(self):
+        """Test parsing with missing optional attributes."""
+        xml = '''<relations>
+<R s="A:1" o="B:1" p="related">summary</R>
+</relations>'''
+        relationships = parse_raw_relationships_from_xml(xml)
+
+        assert len(relationships) == 1
+        assert relationships[0].doc_id == ""
+        assert relationships[0].concept_ids == []
+        assert relationships[0].summary == "summary"

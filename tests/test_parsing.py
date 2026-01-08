@@ -131,16 +131,16 @@ class TestCompactFormat:
         assert concepts[1]["context"] == "apoptosis"
 
     def test_update_xml_compact_to_readable(self):
-        """Test that compact input is converted to readable output."""
+        """Test that compact input produces compact output with matches."""
         xml = '<C q="p53; TP53">p53</C>'
         matches = [[{"ontology": "PR", "id": "PR:000001", "label": "p53 protein"}]]
 
         result = update_xml_with_matches(xml, matches)
 
-        # Output should use readable <concept> format
-        assert "<concept context=" in result
-        assert "<C " not in result
+        # Output should use compact <C> format with <M/> matches
+        assert "<C q=" in result
         assert 'id="PR:000001"' in result
+        assert '<M ' in result
 
     def test_update_xml_no_matches(self):
         """Test conversion with no matches."""
@@ -149,5 +149,5 @@ class TestCompactFormat:
 
         result = update_xml_with_matches(xml, matches)
 
-        assert "<concept context=" in result
-        assert "<match" not in result
+        assert "<C q=" in result
+        assert "<M" not in result

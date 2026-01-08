@@ -3,7 +3,7 @@
 import json
 import os
 from pathlib import Path
-from typing import Annotated, Optional
+from typing import Annotated, Optional, List
 
 from dotenv import load_dotenv
 import typer
@@ -18,7 +18,14 @@ from ontoagain.identify import identify
 from ontoagain.index import build_index_from_config, load_index_metadata, update_index_metadata
 from ontoagain.models import OntologiesConfig
 from ontoagain.recommend import recommend
-from ontoagain.relate import relate_extract, relate_disambiguate, raw_relationships_to_xml, relationships_to_xml
+from ontoagain.relate import (
+    relate_extract,
+    relate_disambiguate,
+    raw_relationships_to_xml,
+    relationships_to_xml,
+    parse_raw_relationships_from_xml,
+)
+from ontoagain.xml_utils import wrap_documents, extract_documents
 
 app = typer.Typer(
     name="onto",
@@ -225,9 +232,9 @@ def recommend_ontologies(
 
 @app.command(name="concept-extract")
 def concept_extract_cmd(
-    paper: Annotated[
-        Path,
-        typer.Argument(help="Path to paper text file"),
+    papers: Annotated[
+        List[Path],
+        typer.Argument(help="Path(s) to paper text file(s)"),
     ],
     index_path: Annotated[
         Optional[Path],
@@ -250,19 +257,22 @@ def concept_extract_cmd(
         typer.Option("--verbose", "-v", help="Show progress info"),
     ] = False,
 ):
-    """Extract concepts from a paper (IDENTIFY step only).
+    """Extract concepts from paper(s) (IDENTIFY step only).
 
-    Outputs XML with <concept> tags for later disambiguation.
-    Optionally accepts an index path to load ontology metadata for better grounding.
+    Accepts one or more input files. Outputs XML with <Documents><D>...</D></Documents>
+    structure containing <C> concept tags for later disambiguation.
     """
     if verbose:
         typer.echo("=== OntoAgain IDENTIFY ===")
         typer.echo(f"Model: {model}")
+        typer.echo(f"Documents: {len(papers)}")
         typer.echo("")
 
-    if not paper.exists():
-        typer.echo(f"Error: Paper file not found: {paper}", err=True)
-        raise typer.Exit(1)
+    # Validate all input files exist
+    for paper in papers:
+        if not paper.exists():
+            typer.echo(f"Error: Paper file not found: {paper}", err=True)
+            raise typer.Exit(1)
 
     # Load ontology metadata if index provided
     ontology_metadata = None
@@ -271,34 +281,22 @@ def concept_extract_cmd(
         if verbose and ontology_metadata:
             typer.echo(f"Loaded metadata for {len(ontology_metadata)} ontologies")
 
-    text = paper.read_text()
-
-    if verbose:
-        typer.echo(f"Paper: {paper}")
-        typer.echo(f"Paper length: {len(text)} characters")
-        typer.echo("")
-
-    # Run IDENTIFY
-    if verbose:
-        typer.echo("Extracting concepts...")
-    xml_output = identify(
-        text, model=model, ontology_metadata=ontology_metadata, verbose=verbose,
-        max_concurrent=max_concurrent,
+    # Process all documents
+    doc_results = identify(
+        papers, model=model, ontology_metadata=ontology_metadata,
+        verbose=verbose, max_concurrent=max_concurrent,
     )
 
-    # Count concepts for verbose output
-    if verbose:
-        concept_count = xml_output.count("<C n=")
-        typer.echo(f"Extracted {concept_count} concepts")
-        typer.echo("")
+    # Wrap in Documents structure
+    final_xml = wrap_documents(doc_results)
 
-    # Output as XML
+    # Output
     if output:
-        output.write_text(xml_output)
+        output.write_text(final_xml)
         if verbose:
             typer.echo(f"XML saved to: {output}")
     else:
-        typer.echo(xml_output)
+        typer.echo(final_xml)
 
 
 @app.command(name="concept-disambiguate")
@@ -362,7 +360,7 @@ def concept_disambiguate_cmd(
     # Run DISAMBIGUATE
     if verbose:
         typer.echo("Matching concepts to ontology...")
-    updated_xml, stats = disambiguate(
+    updated_docs, stats = disambiguate(
         xml_input, index_path, model=model, verbose=verbose,
         ontology_metadata=ontology_metadata, max_concurrent=max_concurrent,
     )
@@ -374,13 +372,14 @@ def concept_disambiguate_cmd(
         typer.echo(f"  Unmatched: {stats['unmatched']}")
         typer.echo("")
 
-    # Output
+    # Wrap and output
+    final_xml = wrap_documents(updated_docs)
     if output:
-        output.write_text(updated_xml)
+        output.write_text(final_xml)
         if verbose:
             typer.echo(f"Results written to: {output}")
     else:
-        typer.echo(updated_xml)
+        typer.echo(final_xml)
 
 
 @app.command(name="relation-extract")
@@ -525,23 +524,8 @@ def relation_disambiguate_cmd(
         typer.echo(f"Loaded metadata for {len(ontology_metadata)} ontologies")
 
     # Parse XML to get RawRelationship objects
-    from ontoagain.models import RawRelationship
-    from ontoagain.xml_utils import parse_xml_fragment
-
     xml_text = relations_file.read_text()
-    root = parse_xml_fragment(xml_text)
-    relationships = []
-
-    for elem in root.findall(".//R"):
-        evidence_ids = elem.get("e", "")
-        concept_ids = [x.strip() for x in evidence_ids.split(",") if x.strip()]
-        relationships.append(RawRelationship(
-            subject_id=elem.get("s", ""),
-            object_id=elem.get("o", ""),
-            predicate=elem.get("p", ""),
-            concept_ids=concept_ids,
-            summary=elem.text.strip() if elem.text else "",
-        ))
+    relationships = parse_raw_relationships_from_xml(xml_text)
 
     if verbose:
         typer.echo(f"Loaded {len(relationships)} relationships from {relations_file}")
@@ -682,95 +666,78 @@ def benchmark_cmd(
             typer.echo(f"Loaded relationship metadata from {rel_index}")
     typer.echo("")
 
-    # Process documents
+    # Step 1: IDENTIFY - extract concepts from all documents
+    if verbose:
+        typer.echo("Step 1: IDENTIFY...")
+    doc_inputs = [(doc.pmid, doc.text) for doc in documents]
+    identified_results = identify(
+        doc_inputs,
+        model=model,
+        ontology_metadata=ontology_metadata,
+        verbose=verbose,
+        max_concurrent=max_concurrent,
+    )
+
+    # Step 2: DISAMBIGUATE - match concepts to MESH
+    if verbose:
+        typer.echo("\nStep 2: DISAMBIGUATE...")
+    identified_xml = wrap_documents(identified_results)
+    disambiguated_docs, disamb_stats = disambiguate(
+        identified_xml,
+        index_path,
+        model=model,
+        ontology_metadata=ontology_metadata,
+        verbose=verbose,
+        max_concurrent=max_concurrent,
+    )
+    disambiguated_xml = wrap_documents(disambiguated_docs)
+
+    # Step 3: RELATE-EXTRACT - extract relationships
+    if verbose:
+        typer.echo("\nStep 3: RELATE-EXTRACT...")
+    all_relationships = relate_extract(
+        disambiguated_xml,
+        model=model,
+        verbose=verbose,
+        max_concurrent=max_concurrent,
+        relationship_metadata=rel_metadata,
+    )
+
+    # Group relationships by doc_id
+    rels_by_doc: dict[str, list] = {doc.pmid: [] for doc in documents}
+    for rel in all_relationships:
+        if rel.doc_id in rels_by_doc:
+            rels_by_doc[rel.doc_id].append(rel)
+
+    # Evaluate per-document
+    if verbose:
+        typer.echo("\nEvaluating...")
+
     all_predicted: list[tuple[str, str]] = []
     all_gold = []
     results_list = []
 
-    for i, doc in enumerate(documents):
+    for doc in documents:
+        doc_rels = rels_by_doc.get(doc.pmid, [])
+        doc_predicted = list(set((rel.subject_id, rel.object_id) for rel in doc_rels))
+
+        all_predicted.extend(doc_predicted)
+        all_gold.extend(doc.relations)
+
+        doc_metrics = evaluate_relations(doc_predicted, doc.relations)
+        results_list.append({
+            "pmid": doc.pmid,
+            "predicted": doc_predicted,
+            "gold": [(r.chemical_id, r.disease_id) for r in doc.relations],
+            "relationships_extracted": len(doc_rels),
+            **doc_metrics,
+        })
+
         if verbose:
-            typer.echo(f"[{i+1}/{len(documents)}] Processing PMID {doc.pmid}...")
-
-        try:
-            # Step 1: IDENTIFY - extract concepts from raw text
-            if verbose:
-                typer.echo("    IDENTIFY...")
-            identified_xml = identify(
-                doc.text,
-                model=model,
-                ontology_metadata=ontology_metadata,
-                verbose=False,
-                max_concurrent=max_concurrent,
+            typer.echo(
+                f"  {doc.pmid}: {len(doc_rels)} rels, "
+                f"P={doc_metrics['precision']:.2f} R={doc_metrics['recall']:.2f} F1={doc_metrics['f1']:.2f}"
             )
-
-            # Step 2: DISAMBIGUATE - match concepts to MESH
-            if verbose:
-                typer.echo("    DISAMBIGUATE...")
-            disambiguated_xml, disamb_stats = disambiguate(
-                identified_xml,
-                index_path,
-                model=model,
-                ontology_metadata=ontology_metadata,
-                verbose=False,
-                max_concurrent=max_concurrent,
-            )
-
-            # Step 3: RELATE-EXTRACT - extract relationships
-            if verbose:
-                typer.echo("    RELATE-EXTRACT...")
-            relationships = relate_extract(
-                disambiguated_xml,
-                model=model,
-                verbose=False,
-                max_concurrent=max_concurrent,
-                relationship_metadata=rel_metadata,
-            )
-
-            # Extract CID predictions (chemical -> disease)
-            # For BC5CDR, the LLM extracts "induces" relationships which are chemical->disease
-            # We trust the subject/object order from the LLM
-            doc_predicted = []
-            for rel in relationships:
-                # Use the relationship as extracted (subject -> object)
-                doc_predicted.append((rel.subject_id, rel.object_id))
-
-            # Deduplicate
-            normalized_predicted = list(set(doc_predicted))
-
-            all_predicted.extend(normalized_predicted)
-            all_gold.extend(doc.relations)
-
-            doc_result = {
-                "pmid": doc.pmid,
-                "predicted": normalized_predicted,
-                "gold": [(r.chemical_id, r.disease_id) for r in doc.relations],
-                "concepts_matched": disamb_stats.get("matched", 0),
-                "concepts_unmatched": disamb_stats.get("unmatched", 0),
-                "relationships_extracted": len(relationships),
-            }
-            doc_metrics = evaluate_relations(normalized_predicted, doc.relations)
-            doc_result.update(doc_metrics)
-            results_list.append(doc_result)
-
-            if verbose:
-                typer.echo(
-                    f"    Concepts: {disamb_stats.get('matched', 0)} matched, "
-                    f"Relations: {len(relationships)} extracted, "
-                    f"CID: {len(normalized_predicted)} predicted vs {len(doc.relations)} gold"
-                )
-                typer.echo(
-                    f"    P={doc_metrics['precision']:.2f} R={doc_metrics['recall']:.2f} F1={doc_metrics['f1']:.2f}"
-                )
-
-        except Exception as e:
-            if verbose:
-                typer.echo(f"    Error: {e}")
-            results_list.append({
-                "pmid": doc.pmid,
-                "error": str(e),
-                "gold": [(r.chemical_id, r.disease_id) for r in doc.relations],
-            })
-            all_gold.extend(doc.relations)
 
     # Compute overall metrics
     from benchmarks.bc5cdr import Relation

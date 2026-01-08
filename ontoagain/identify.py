@@ -391,81 +391,82 @@ def add_concept_ids(xml_text: str) -> str:
 
 
 def identify(
-    text: str,
+    documents: list[Path] | list[tuple[str, str]],
     model: str = DEFAULT_MODEL,
     ontology_metadata: list[OntologyMetadata] | None = None,
     verbose: bool = False,
     max_concurrent: int = 4,
-) -> str:
-    """Run the IDENTIFY agent on paper text.
+) -> list[tuple[str, str]]:
+    """Run the IDENTIFY agent on documents.
 
-    For long documents, uses chunking. With max_concurrent > 1, chunks
-    are processed concurrently for faster execution.
+    Processes all documents in parallel with shared concurrency limit.
 
     Args:
-        text: Plain text of the paper
+        documents: List of Paths (read lazily) OR list of (doc_id, text) tuples
         model: LLM model to use
         ontology_metadata: Optional metadata about indexed ontologies
         verbose: Print debug info
-        max_concurrent: Maximum concurrent LLM calls (1 = sequential, default 4)
+        max_concurrent: Maximum concurrent LLM calls
 
     Returns:
-        XML-tagged text with concepts
+        List of (doc_id, xml_output) tuples in same order as input
     """
-    # Format ontology info if provided
+    if not documents:
+        return []
+
+    # Normalize to (doc_id, text_or_path) - detect input type from first element
+    is_paths = isinstance(documents[0], Path)
+    doc_inputs: list[tuple[str, str | Path]] = []
+    for doc in documents:
+        if is_paths:
+            doc_inputs.append((doc.name, doc))
+        else:
+            doc_inputs.append(doc)
+
     ontology_info = ""
     if ontology_metadata:
         ontology_info = format_ontology_info(ontology_metadata)
 
-    # Check if we need chunking
-    needs_chunking = len(text) > MAX_CHUNK_CHARS
-
-    if not needs_chunking:
-        # Simple case: process entire document
-        if verbose:
-            print(f"Calling LLM ({model}) for identification...")
-
-        result = identify_chunk(
-            text, model, ontology_info, document_context="", verbose=verbose
-        )
-
-        # Add incrementing IDs to concepts
-        result = add_concept_ids(result)
-
-        if verbose:
-            print(f"LLM call complete. Response length: {len(result) if result else 0} chars")
-
-        return result
-
-    # Long document: chunk and process
     if verbose:
-        mode = f"parallel, max {max_concurrent} concurrent" if max_concurrent > 1 else "sequential"
-        print(f"Document too long ({len(text)} chars), using chunked processing ({mode})...", flush=True)
+        print(f"Processing {len(documents)} doc(s), max {max_concurrent} concurrent", flush=True)
 
-    chunks = chunk_text(text)
+    async def process_all():
+        semaphore = asyncio.Semaphore(max_concurrent)
 
-    if verbose:
-        chunk_sizes = [len(c) for c in chunks]
-        print(f"  Chunks: {len(chunks)} (sizes: {min(chunk_sizes)}-{max(chunk_sizes)}, avg {sum(chunk_sizes)//len(chunks)})", flush=True)
-        print(flush=True)
+        async def process_doc(doc_id: str, text_or_path: str | Path):
+            text = text_or_path.read_text() if isinstance(text_or_path, Path) else text_or_path
+            chunks = chunk_text(text) if len(text) > MAX_CHUNK_CHARS else [text]
 
-    tagged_chunks = run_async(
-        identify_parallel(chunks, model, ontology_info, max_concurrent, verbose)
-    )
+            async def process_chunk(chunk_idx: int, chunk: str):
+                async with semaphore:
+                    _, xml, _ = await identify_chunk_async(
+                        chunk, model, ontology_info, "",
+                        chunk_idx + 1, len(chunks)
+                    )
+                    return chunk_idx, xml
 
-    # Combine chunks
-    result = combine_chunk_outputs(tagged_chunks)
+            chunk_results = await asyncio.gather(*[
+                process_chunk(i, c) for i, c in enumerate(chunks)
+            ])
 
-    # Add incrementing IDs to concepts
-    result = add_concept_ids(result)
+            sorted_chunks = sorted(chunk_results, key=lambda x: x[0])
+            tagged = [xml for _, xml in sorted_chunks]
+            combined = combine_chunk_outputs(tagged) if len(tagged) > 1 else tagged[0]
+            final = add_concept_ids(combined)
 
-    final_concepts = result.count("<C n=")
+            if verbose:
+                print(f"  {doc_id}: {final.count('<C n=')} concepts", flush=True)
 
-    if verbose:
-        print(flush=True)
-        print(f"Combined: {final_concepts} concepts, {len(result)} chars", flush=True)
+            return doc_id, final
 
-    return result
+        tasks = [process_doc(doc_id, text_or_path) for doc_id, text_or_path in doc_inputs]
+        return await asyncio.gather(*tasks)
+
+    results = run_async(process_all())
+
+    # Preserve input order
+    doc_order = {doc_id: i for i, (doc_id, _) in enumerate(doc_inputs)}
+    return sorted(results, key=lambda x: doc_order[x[0]])
 
 
 def parse_xml_output(xml_text: str) -> list[Concept]:

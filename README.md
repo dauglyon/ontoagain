@@ -4,25 +4,29 @@ An experimental LLM-powered tool for ontology term identification, disambiguatio
 
 ## What It Does
 
-OntoAgain extracts scientific concepts from research papers, maps them to ontology terms, and extracts relationships between them.
+OntoAgain extracts scientific concepts from research papers, maps them to ontology terms, and identifies relationships between them.
 
 **Input** (plain text from a paper):
 ```
 DNA methylation of 6mA in ciliates is associated with transcriptional activation.
 ```
 
-**Output** (concepts with ontology mappings, inline in the original text):
+**Output** (concepts with ontology mappings, wrapped in Documents structure):
 ```xml
+<Documents>
+<D id="paper.txt">
 <C n="1" q="DNA methylation; epigenetic modification">DNA methylation<M id="GO:0006306" o="GO" l="DNA methylation"/></C> of
 <C n="2" q="6mA; N6-methyladenine">6mA<M id="CHEBI:21891" o="CHEBI" l="N6-methyladenine"/></C> in
 <C n="3" q="ciliates; Ciliophora">ciliates<M id="NCBITaxon:5878" o="NCBITAXON" l="Ciliophora"/></C> is associated with
 <C n="4" q="transcriptional activation">transcriptional activation<M id="GO:0045893" o="GO" l="positive regulation of transcription"/></C>.
+</D>
+</Documents>
 ```
 
 **Extracted relationships** (optional, can be mapped to a relationship ontology):
 ```xml
 <relations>
-<R s="GO:0006306" o="GO:0045893" p="associated_with" e="1,4">DNA methylation is associated with transcriptional activation in ciliates</R>
+<R d="paper.txt" s="GO:0006306" o="GO:0045893" p="associated_with" e="1,4">DNA methylation is associated with transcriptional activation in ciliates</R>
 </relations>
 ```
 
@@ -65,13 +69,13 @@ OntoAgain uses **retrieval-augmented grounding**: vector search retrieves candid
                          └───────────────────┘
 ```
 
-The pipeline is split into phases so each can use different models and the grounding step can scale independently. Concepts are annotated inline, preserving document structure and positions for downstream processing.
+The pipeline is split into phases so each can use different models and grounding can scale independently. Concepts are annotated inline, preserving document structure and positions for downstream processing.
 
 ## Benchmarks
 
 ### BC5CDR: Chemical-Induced-Disease Relation Extraction
 
-Tested on the BioCreative V CDR corpus (Chemical-Disease Relations). This is an early benchmark—results will likely improve with further prompt tuning.
+Evaluated on the BioCreative V CDR corpus (Chemical-Disease Relations). This is an early benchmark—results will likely improve with prompt tuning.
 
 | Metric | OntoAgain |
 |--------|-----------|
@@ -101,7 +105,7 @@ onto recommend-ontologies paper.txt --verbose
 
 ### 2. Build an ontology index
 
-Download ontologies to the data folder:
+Download ontologies:
 
 ```bash
 mkdir -p data/ontologies
@@ -109,7 +113,7 @@ curl -Lo data/ontologies/go.obo http://purl.obolibrary.org/obo/go.obo
 curl -Lo data/ontologies/chebi.obo http://purl.obolibrary.org/obo/chebi.obo
 ```
 
-Edit `sample_config.yaml` to point to your ontologies, then build the index:
+Edit `sample_config.yaml` to specify your ontologies, then build the index:
 
 ```bash
 onto index sample_config.yaml -O data/indexes/my-index -v
@@ -120,10 +124,10 @@ The config file contains descriptions that guide the LLM during disambiguation. 
 ### 3. Run the pipeline
 
 ```bash
-# Step 1: Extract concepts
-onto concept-extract paper.txt --index data/indexes/my-index -o data/concepts.xml -v
+# Step 1: Extract concepts (supports multiple input files)
+onto concept-extract paper1.txt paper2.txt --index data/indexes/my-index -o data/concepts.xml -v
 
-# Step 2: Match concepts to ontology terms
+# Step 2: Match concepts to ontology terms (batched across documents)
 onto concept-disambiguate data/concepts.xml --index data/indexes/my-index -o data/tagged.xml -v
 
 # Step 3: Extract relationships (optional)
@@ -133,6 +137,8 @@ onto relation-extract data/tagged.xml -o data/relations.xml -v
 onto relation-disambiguate data/relations.xml --rel-index data/indexes/rel-index -o data/relations-mapped.xml -v
 ```
 
+All stages use `<Documents><D id="...">...</D></Documents>` XML format for multi-document support.
+
 ## Commands
 
 | Command | Description |
@@ -140,9 +146,9 @@ onto relation-disambiguate data/relations.xml --rel-index data/indexes/rel-index
 | `onto recommend-ontologies <paper>` | Suggest ontologies for a paper |
 | `onto index <config.yaml> -O <output>` | Build vector index from ontologies |
 | `onto update-metadata <config.yaml> -i <index>` | Update index metadata without re-embedding |
-| `onto concept-extract <paper> [--index <path>]` | Extract concepts as XML |
+| `onto concept-extract <papers...> [--index <path>]` | Extract concepts from papers |
 | `onto concept-disambiguate <xml> --index <path>` | Match concepts to ontology terms |
-| `onto relation-extract <xml>` | Extract relationships between matched concepts |
+| `onto relation-extract <xml>` | Extract relationships between concepts |
 | `onto relation-disambiguate <xml> --rel-index <path>` | Map predicates to relationship ontology |
 | `onto benchmark -i <index> -d <data> [-r <rel-index>]` | Run BC5CDR benchmark |
 
@@ -157,7 +163,7 @@ export OPENAI_API_BASE=https://api.example.com
 export OPENAI_API_KEY=your-key
 
 # Specify model
-onto concept-extract paper.txt --model anthropic/claude-sonnet
+onto concept-extract paper1.txt paper2.txt --model anthropic/claude-sonnet
 ```
 
 ## Architecture
@@ -166,7 +172,7 @@ onto concept-extract paper.txt --model anthropic/claude-sonnet
 ontoagain/
 ├── cli.py           # Typer CLI
 ├── identify.py      # Concept extraction with chunking
-├── disambiguate.py  # Ontology matching (batches concepts with overlapping candidates)
+├── disambiguate.py  # Ontology matching (batches by candidate overlap)
 ├── relate.py        # Relationship extraction and disambiguation
 ├── recommend.py     # Ontology recommendations
 ├── index.py         # LanceDB vector index
@@ -192,7 +198,7 @@ ontoagain/
 | **Grounding** | Vector retrieval + LLM verification | Direct LLM grounding |
 | **Scalability** | Large ontologies via vector index | Limited by context window |
 | **Output** | Inline document annotation | Structured JSON/YAML/RDF |
-| **Hallucination risk** | Lower (selection from candidates) | Higher (LLM generates IDs) |
+| **Hallucination risk** | Lower (selects from candidates) | Higher (LLM generates IDs) |
 | **Multi-ontology** | Single run across all indexed ontologies | Separate template per ontology |
 
 OntoGPT is more mature and better suited for structured knowledge base population. OntoAgain is experimental and focused on document annotation with inline position tracking.
@@ -201,7 +207,7 @@ OntoGPT is more mature and better suited for structured knowledge base populatio
 
 ### BC5CDR Setup
 
-The BC5CDR benchmark requires downloading external data files.
+The BC5CDR benchmark requires external data files.
 
 1. **Download BC5CDR Corpus** from BioCreative:
    ```bash
@@ -225,7 +231,7 @@ The BC5CDR benchmark requires downloading external data files.
    # Build MESH index
    onto index benchmarks/mesh_config.yaml -O data/indexes/mesh -v
 
-   # Build CID relationship index (optional, improves extraction)
+   # Build CID relationship index (optional)
    onto index benchmarks/cid_config.yaml -O data/indexes/cid -v
    ```
 
@@ -247,7 +253,6 @@ The BC5CDR benchmark requires downloading external data files.
 ## Future Work
 
 - Schema support for constrained extraction
-- Comparison with OntoGPT on standard benchmarks
 - Domain-specific embedding models
 - Smaller/local LLM support
 

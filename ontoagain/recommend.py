@@ -79,7 +79,8 @@ def recommend(
     if verbose:
         print("Step 1: Extracting concepts...")
 
-    tagged_text = identify(text, model=model, verbose=verbose)
+    results = identify([("input", text)], model=model, verbose=verbose)
+    tagged_text = results[0][1] if results else ""
     concepts = parse_xml_output(tagged_text)
 
     if verbose:

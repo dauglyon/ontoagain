@@ -406,70 +406,65 @@ def disambiguate(
     verbose: bool = False,
     ontology_metadata: list[OntologyMetadata] | None = None,
     max_concurrent: int = 6,
-) -> tuple[str, dict]:
+) -> tuple[list[tuple[str, str]], dict]:
     """Disambiguate concepts in XML to ontology terms.
 
-    Uses batching to reduce LLM calls: concepts with overlapping candidate sets
-    are grouped and processed together. With max_concurrent > 1, batches
-    are processed concurrently for faster execution.
+    Expects <Documents><D id="...">...</D></Documents> format.
+    Concepts are pooled across documents for efficient batching.
 
     Args:
-        xml_input: XML text with <concept> tags from IDENTIFY
+        xml_input: XML with <Documents><D>...</D></Documents> structure
         index_path: Path to LanceDB index
         model: LLM model to use
         top_k: Number of candidates per concept
         verbose: Print debug info
         ontology_metadata: Optional metadata about ontologies for context
-        max_concurrent: Maximum concurrent LLM calls (1 = sequential, default 6)
+        max_concurrent: Maximum concurrent LLM calls
 
     Returns:
-        Tuple of (updated_xml, stats)
+        Tuple of (list of (doc_id, xml_content) tuples, stats dict)
     """
-    # Extract concepts from XML
-    concept_dicts = extract_concepts_from_xml(xml_input)
+    from ontoagain.xml_utils import extract_documents
 
-    if not concept_dicts:
+    documents = extract_documents(xml_input)
+
+    # Extract concepts from all documents, tracking source
+    all_concept_dicts = []
+    doc_ranges = {}  # doc_id -> (start_idx, end_idx)
+
+    for doc_id, doc_xml in documents:
+        start = len(all_concept_dicts)
+        all_concept_dicts.extend(extract_concepts_from_xml(doc_xml))
+        doc_ranges[doc_id] = (start, len(all_concept_dicts))
+
+    if not all_concept_dicts:
         return xml_input, {"total": 0, "matched": 0, "unmatched": 0, "total_mappings": 0}
 
     if verbose:
-        print(f"Disambiguating {len(concept_dicts)} concepts...")
-
-    # Step 1: Retrieve candidates for all concepts (batch search - loads model once)
-    if verbose:
+        print(f"Disambiguating {len(all_concept_dicts)} concepts from {len(documents)} doc(s)...")
         print("  Retrieving candidates from vector index...")
 
-    # Use context for vector search (replace semicolons with spaces for embedding)
-    queries = []
-    for c in concept_dicts:
-        if c["context"]:
-            queries.append(c["context"].replace(";", " "))
-        else:
-            queries.append(c["text"])
+    # Step 1: Retrieve candidates for all concepts
+    queries = [
+        c["context"].replace(";", " ") if c["context"] else c["text"]
+        for c in all_concept_dicts
+    ]
     all_candidates = search_index_batch(index_path, queries, top_k=top_k, verbose=verbose)
 
-    # Step 2: Cluster concepts by candidate overlap
-    concept_candidate_sets = [
+    # Step 2: Cluster concepts by candidate overlap (across all documents)
+    clusters = cluster_by_candidates([
         (i, {c["id"] for c in cands})
         for i, cands in enumerate(all_candidates)
-    ]
-    clusters = cluster_by_candidates(concept_candidate_sets)
+    ])
 
     if verbose:
-        mode = f"parallel, max {max_concurrent} concurrent" if max_concurrent > 1 else "sequential"
-        print(f"  Grouped into {len(clusters)} batches (from {len(concept_dicts)} concepts) [{mode}]")
+        print(f"  Grouped into {len(clusters)} batches")
 
-    # Convert dicts to Concept objects for batch processing
+    # Step 3: Disambiguate
     concepts = [
-        Concept(
-            text=c["text"],
-            context=c["context"],
-            start=0,  # Not used in XML flow
-            end=0,
-        )
-        for c in concept_dicts
+        Concept(text=c["text"], context=c["context"], start=0, end=0)
+        for c in all_concept_dicts
     ]
-
-    # Step 3: Disambiguate each cluster
     all_matches = run_async(
         disambiguate_parallel(
             clusters, concepts, all_candidates, model,
@@ -477,36 +472,36 @@ def disambiguate(
         )
     )
 
-    # Step 4: Build matches list parallel to concepts for XML update
-    matches_list: list[list[dict]] = []
+    # Step 4: Build matches list
+    matches_list = []
     matched_count = 0
     total_mappings = 0
 
-    for i in range(len(concept_dicts)):
+    for i in range(len(all_concept_dicts)):
         matches = all_matches.get(i, [])
-        # Convert OntologyMatch to dict for XML update
-        match_dicts = [
-            {"ontology": m.ontology, "id": m.id, "label": m.label}
-            for m in matches
-        ]
+        match_dicts = [{"ontology": m.ontology, "id": m.id, "label": m.label} for m in matches]
         matches_list.append(match_dicts)
-
         if matches:
             matched_count += 1
             total_mappings += len(matches)
 
-    # Step 5: Update XML with matches
-    updated_xml = update_xml_with_matches(xml_input, matches_list)
+    # Step 5: Update each document's XML
+    updated_docs = []
+    for doc_id, doc_xml in documents:
+        start, end = doc_ranges[doc_id]
+        updated_doc = update_xml_with_matches(doc_xml, matches_list[start:end])
+        updated_docs.append((doc_id, updated_doc))
 
     stats = {
-        "total": len(concept_dicts),
+        "total": len(all_concept_dicts),
         "batches": len(clusters),
         "matched": matched_count,
-        "unmatched": len(concept_dicts) - matched_count,
+        "unmatched": len(all_concept_dicts) - matched_count,
         "total_mappings": total_mappings,
+        "documents": len(documents),
     }
 
     if verbose:
         print(f"  Matched: {matched_count}, Unmatched: {stats['unmatched']}")
 
-    return updated_xml, stats
+    return updated_docs, stats

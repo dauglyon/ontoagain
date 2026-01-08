@@ -83,6 +83,7 @@ class OntologyMetadata(BaseModel):
 class RawRelationship(BaseModel):
     """Relationship extracted by LLM (before predicate disambiguation)."""
 
+    doc_id: str  # Source document ID
     subject_id: str  # Ontology ID from <M/> tag (e.g., "D003000")
     object_id: str  # Ontology ID from <M/> tag (e.g., "D006973")
     predicate: str  # Relationship type only: "induces", "inhibits", "regulates"
@@ -93,6 +94,7 @@ class RawRelationship(BaseModel):
 class Relationship(BaseModel):
     """Fully resolved relationship (after predicate disambiguation)."""
 
+    doc_id: str  # Source document ID
     subject_id: str  # Ontology ID (e.g., "D003000")
     object_id: str  # Ontology ID (e.g., "D006973")
     predicate_id: str  # Relationship ontology ID (e.g., "RO:0002436")

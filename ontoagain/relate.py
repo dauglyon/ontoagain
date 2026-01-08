@@ -109,30 +109,25 @@ def relate_extract(
 ) -> list[RawRelationship]:
     """Extract relationships from disambiguated XML.
 
+    Expects <Documents><D id="...">...</D></Documents> format.
+    Processes documents in parallel.
+
     Args:
-        xml_input: XML with <C n="..."><M id="..."/></C> tags
+        xml_input: XML with Documents/D structure containing <C><M/></C> tags
         model: LLM model to use
         verbose: Print debug info
-        max_concurrent: Maximum concurrent LLM calls (for chunking)
+        max_concurrent: Maximum concurrent LLM calls
         relationship_metadata: Optional metadata from relationship ontology index
 
     Returns:
-        List of RawRelationship objects
+        List of RawRelationship objects (each has doc_id field)
     """
-    # Extract concepts with their matches
-    concepts = extract_matched_concepts_from_xml(xml_input)
+    from ontoagain.xml_utils import extract_documents
 
-    if not concepts:
-        return []
+    documents = extract_documents(xml_input)
 
-    matched_count = sum(1 for c in concepts if c["matches"])
     if verbose:
-        print(f"Found {len(concepts)} concepts ({matched_count} with matches)")
-
-    if matched_count == 0:
-        if verbose:
-            print("  No matched concepts, skipping relation extraction")
-        return []
+        print(f"Extracting relationships from {len(documents)} doc(s)...")
 
     # Build relationship context from metadata
     relationship_context = ""
@@ -145,35 +140,43 @@ def relate_extract(
         lines.append("")
         relationship_context = "\n".join(lines)
 
-    # Build prompt
-    prompt = load_extract_prompt()
-    prompt = prompt.replace("{relationship_context}", relationship_context)
-    prompt = prompt.replace("{xml_input}", xml_input)
+    async def process_all():
+        semaphore = asyncio.Semaphore(max_concurrent)
 
-    # Call LLM
-    client, model_name = get_client(model)
+        async def process_doc(doc_id: str, doc_xml: str) -> list[RawRelationship]:
+            concepts = extract_matched_concepts_from_xml(doc_xml)
+            matched = sum(1 for c in concepts if c["matches"])
+            if matched == 0:
+                return []
 
-    if verbose:
-        print(f"Calling LLM to extract relationships...")
+            async with semaphore:
+                prompt = load_extract_prompt()
+                prompt = prompt.replace("{relationship_context}", relationship_context)
+                prompt = prompt.replace("{xml_input}", doc_xml)
 
-    start = time.time()
-    messages = [{"role": "user", "content": prompt}]
-    result = call_llm(client, model_name, messages)
-    elapsed = time.time() - start
+                messages = [{"role": "user", "content": prompt}]
+                result = await call_llm_async(model, messages)
+                rels = _parse_relation_xml(doc_id, result or "")
 
-    if verbose:
-        print(f"  -> {len(result)} chars in {elapsed:.1f}s")
+                if verbose:
+                    print(f"  {doc_id}: {len(rels)} relationships", flush=True)
 
-    # Parse XML result
-    relationships = _parse_relation_xml(result, verbose)
+                return rels
 
-    if verbose:
-        print(f"  Extracted {len(relationships)} relationships")
+        tasks = [process_doc(doc_id, doc_xml) for doc_id, doc_xml in documents]
+        return await asyncio.gather(*tasks)
 
-    return relationships
+    results = run_async(process_all())
+
+    # Flatten all results
+    all_rels = []
+    for doc_rels in results:
+        all_rels.extend(doc_rels)
+
+    return all_rels
 
 
-def _parse_relation_xml(xml_text: str, verbose: bool = False) -> list[RawRelationship]:
+def _parse_relation_xml(doc_id: str, xml_text: str, verbose: bool = False) -> list[RawRelationship]:
     """Parse relationship XML output from LLM.
 
     Expected format:
@@ -198,6 +201,7 @@ def _parse_relation_xml(xml_text: str, verbose: bool = False) -> list[RawRelatio
 
             if subject_id and object_id and predicate:
                 relationships.append(RawRelationship(
+                    doc_id=doc_id,
                     subject_id=subject_id,
                     object_id=object_id,
                     predicate=predicate,
@@ -209,33 +213,6 @@ def _parse_relation_xml(xml_text: str, verbose: bool = False) -> list[RawRelatio
             print(f"  Warning: Failed to parse relationship XML: {e}")
 
     return relationships
-
-
-async def relate_extract_async(
-    xml_input: str,
-    model: str,
-) -> list[RawRelationship]:
-    """Async version of relate_extract."""
-    # Extract concepts with their matches
-    concepts = extract_matched_concepts_from_xml(xml_input)
-
-    if not concepts:
-        return []
-
-    matched_count = sum(1 for c in concepts if c["matches"])
-    if matched_count == 0:
-        return []
-
-    # Build prompt
-    prompt = load_extract_prompt()
-    prompt = prompt.replace("{xml_input}", xml_input)
-
-    # Call LLM
-    messages = [{"role": "user", "content": prompt}]
-    result = await call_llm_async(model, messages)
-
-    # Parse XML result
-    return _parse_relation_xml(result or "")
 
 
 def relate_disambiguate(
@@ -251,7 +228,7 @@ def relate_disambiguate(
     """Disambiguate relationship predicates to ontology terms.
 
     Args:
-        relationships: List of RawRelationship from relate_extract
+        relationships: List of RawRelationship from relate_extract (each has doc_id)
         relationship_index: Path to relationship ontology index (e.g., RO)
         model: LLM model to use
         concept_index: Optional path to concept index for subject/object context
@@ -261,13 +238,14 @@ def relate_disambiguate(
         ontology_metadata: Optional metadata about ontologies
 
     Returns:
-        List of Relationship objects with predicate_id and predicate_label
+        List of Relationship objects (each has doc_id from its RawRelationship)
     """
     if not relationships:
         return []
 
     if verbose:
-        print(f"Disambiguating {len(relationships)} relationship predicates...")
+        doc_count = len(set(r.doc_id for r in relationships))
+        print(f"Disambiguating {len(relationships)} relationships from {doc_count} doc(s)...")
 
     # Step 1: Get unique predicates and their candidates
     unique_predicates = list(set(r.predicate for r in relationships))
@@ -275,25 +253,19 @@ def relate_disambiguate(
     if verbose:
         print(f"  {len(unique_predicates)} unique predicates")
 
-    # Batch search for candidates
     candidates_by_predicate = {}
     all_candidates = search_index_batch(
         relationship_index, unique_predicates, top_k=top_k, verbose=verbose
     )
-
     for pred, cands in zip(unique_predicates, all_candidates):
         candidates_by_predicate[pred] = cands
 
-    # Step 2: Batch disambiguate predicates
-    # Group relationships into batches
-    batches = []
-    for i in range(0, len(relationships), MAX_BATCH_SIZE):
-        batches.append(relationships[i:i + MAX_BATCH_SIZE])
+    # Step 2: Batch disambiguate
+    batches = [relationships[i:i + MAX_BATCH_SIZE] for i in range(0, len(relationships), MAX_BATCH_SIZE)]
 
     if verbose:
         print(f"  Processing {len(batches)} batches...")
 
-    # Process batches
     all_results = run_async(
         _disambiguate_parallel(
             batches, candidates_by_predicate, model,
@@ -332,6 +304,7 @@ async def _disambiguate_batch_async(
         # No candidates - return with empty predicate_id
         return [
             Relationship(
+                doc_id=r.doc_id,
                 subject_id=r.subject_id,
                 object_id=r.object_id,
                 predicate_id="",
@@ -393,6 +366,7 @@ async def _disambiguate_batch_async(
             predicate_label = c["label"]
 
         results.append(Relationship(
+            doc_id=rel.doc_id,
             subject_id=rel.subject_id,
             object_id=rel.object_id,
             predicate_id=predicate_id,
@@ -405,12 +379,44 @@ async def _disambiguate_batch_async(
     return results
 
 
+def parse_raw_relationships_from_xml(xml_text: str) -> list[RawRelationship]:
+    """Parse raw relationships from XML format.
+
+    Expected format:
+    <relations>
+    <R d="doc_id" s="ID1" o="ID2" p="predicate" e="1,2">Summary text</R>
+    </relations>
+
+    Args:
+        xml_text: XML string with <relations><R/></relations> structure
+
+    Returns:
+        List of RawRelationship objects
+    """
+    root = parse_xml_fragment(xml_text)
+    relationships = []
+
+    for elem in root.findall(".//R"):
+        evidence_ids = elem.get("e", "")
+        concept_ids = [x.strip() for x in evidence_ids.split(",") if x.strip()]
+        relationships.append(RawRelationship(
+            doc_id=elem.get("d", ""),
+            subject_id=elem.get("s", ""),
+            object_id=elem.get("o", ""),
+            predicate=elem.get("p", ""),
+            concept_ids=concept_ids,
+            summary=elem.text.strip() if elem.text else "",
+        ))
+
+    return relationships
+
+
 def raw_relationships_to_xml(relationships: list[RawRelationship]) -> str:
     """Convert raw relationships to XML format.
 
     Output format:
     <relations>
-    <R s="ID1" o="ID2" p="predicate" e="1,2">Summary text</R>
+    <R d="doc_id" s="ID1" o="ID2" p="predicate" e="1,2">Summary text</R>
     </relations>
     """
     lines = ["<relations>"]
@@ -418,7 +424,7 @@ def raw_relationships_to_xml(relationships: list[RawRelationship]) -> str:
         e_attr = ",".join(rel.concept_ids) if rel.concept_ids else ""
         summary = _escape_attr(rel.summary) if rel.summary else ""
         lines.append(
-            f'<R s="{rel.subject_id}" o="{rel.object_id}" p="{rel.predicate}" e="{e_attr}">{summary}</R>'
+            f'<R d="{_escape_attr(rel.doc_id)}" s="{rel.subject_id}" o="{rel.object_id}" p="{rel.predicate}" e="{e_attr}">{summary}</R>'
         )
     lines.append("</relations>")
     return "\n".join(lines)
@@ -429,10 +435,11 @@ def relationships_to_xml(relationships: list[Relationship]) -> str:
 
     Output format:
     <relations>
-    <R s="ID1" o="ID2" p="RO:001" pl="causes" pr="induces" e="1,2">Summary text</R>
+    <R d="doc_id" s="ID1" o="ID2" p="RO:001" pl="causes" pr="induces" e="1,2">Summary text</R>
     </relations>
 
     Attributes:
+    - d = document ID
     - s = subject ontology ID
     - o = object ontology ID
     - p = predicate ontology ID (from disambiguation)
@@ -448,7 +455,7 @@ def relationships_to_xml(relationships: list[Relationship]) -> str:
         pl_attr = _escape_attr(rel.predicate_label) if rel.predicate_label else ""
         pr_attr = _escape_attr(rel.predicate_raw) if rel.predicate_raw else ""
         lines.append(
-            f'<R s="{rel.subject_id}" o="{rel.object_id}" p="{p_attr}" pl="{pl_attr}" pr="{pr_attr}" e="{e_attr}">{summary}</R>'
+            f'<R d="{_escape_attr(rel.doc_id)}" s="{rel.subject_id}" o="{rel.object_id}" p="{p_attr}" pl="{pl_attr}" pr="{pr_attr}" e="{e_attr}">{summary}</R>'
         )
     lines.append("</relations>")
     return "\n".join(lines)

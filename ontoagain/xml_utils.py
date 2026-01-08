@@ -284,3 +284,60 @@ def _escape_attr(value: str) -> str:
             .replace('"', "&quot;")
             .replace("<", "&lt;")
             .replace(">", "&gt;"))
+
+
+def _escape_text(value: str) -> str:
+    """Escape a string for use as XML text content."""
+    return (value
+            .replace("&", "&amp;")
+            .replace("<", "&lt;")
+            .replace(">", "&gt;"))
+
+
+def wrap_document(content: str, doc_id: str) -> str:
+    """Wrap content in a single <D> document element."""
+    return f'<D id="{_escape_attr(doc_id)}">{content}</D>'
+
+
+def wrap_documents(doc_contents: list[tuple[str, str]]) -> str:
+    """Wrap multiple documents in a <Documents> root element.
+
+    Args:
+        doc_contents: List of (doc_id, content) tuples
+
+    Returns:
+        XML string with <Documents><D id="...">...</D>...</Documents> structure
+    """
+    parts = ["<Documents>"]
+    for doc_id, content in doc_contents:
+        parts.append(wrap_document(content, doc_id))
+    parts.append("</Documents>")
+    return "\n".join(parts)
+
+
+def extract_documents(xml_text: str) -> list[tuple[str, str]]:
+    """Extract documents from a <Documents> wrapper.
+
+    Args:
+        xml_text: XML with <Documents><D id="...">...</D>...</Documents> structure
+
+    Returns:
+        List of (doc_id, content) tuples
+    """
+    root = parse_xml_fragment(xml_text)
+    documents = []
+
+    for doc_elem in root.findall(".//D"):
+        doc_id = doc_elem.get("id", "")
+        # Get inner XML (everything inside the <D> tag)
+        inner_parts = []
+        if doc_elem.text:
+            inner_parts.append(doc_elem.text)
+        for child in doc_elem:
+            inner_parts.append(ET.tostring(child, encoding="unicode"))
+            if child.tail:
+                inner_parts.append(child.tail)
+        content = "".join(inner_parts)
+        documents.append((doc_id, content))
+
+    return documents
